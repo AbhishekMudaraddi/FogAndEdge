@@ -1,0 +1,101 @@
+# Deploy edge + cloud to Elastic Beanstalk and (optionally) update the fog Lambda.
+# Prerequisites: EB application + two environments, SQS, DynamoDB, Lambda created in AWS.
+# Configure repository secrets (Settings → Secrets and variables → Actions).
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: aws-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-edge:
+    name: Deploy edge (EB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package edge_app
+        run: |
+          cd edge_app
+          zip -r ../edge-bundle.zip . \
+            -x "**/__pycache__/*" \
+            -x "**/*.pyc" \
+            -x "**/.DS_Store" \
+            -x "**/.venv/*"
+
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ secrets.EB_APPLICATION_NAME }}
+          environment_name: ${{ secrets.EB_EDGE_ENVIRONMENT_NAME }}
+          version_label: edge-${{ github.run_number }}-${{ github.run_attempt }}-${{ github.sha }}
+          region: ${{ secrets.AWS_REGION }}
+          deployment_package: edge-bundle.zip
+          wait_for_deployment: true
+
+  deploy-cloud:
+    name: Deploy cloud dashboard (EB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package cloud_app
+        run: |
+          cd cloud_app
+          zip -r ../cloud-bundle.zip . \
+            -x "**/__pycache__/*" \
+            -x "**/*.pyc" \
+            -x "**/.DS_Store" \
+            -x "**/.venv/*"
+
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ secrets.EB_APPLICATION_NAME }}
+          environment_name: ${{ secrets.EB_CLOUD_ENVIRONMENT_NAME }}
+          version_label: cloud-${{ github.run_number }}-${{ github.run_attempt }}-${{ github.sha }}
+          region: ${{ secrets.AWS_REGION }}
+          deployment_package: cloud-bundle.zip
+          wait_for_deployment: true
+
+  deploy-fog-lambda:
+    name: Update fog Lambda (optional)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Package lambda_fog
+        run: |
+          cd lambda_fog
+          zip -r ../fog-lambda.zip lambda_function.py
+
+      - name: Publish new function code
+        env:
+          FOG_FN: ${{ secrets.FOG_LAMBDA_FUNCTION_NAME }}
+        run: |
+          if [ -z "$FOG_FN" ]; then
+            echo "FOG_LAMBDA_FUNCTION_NAME secret not set — skipping Lambda deploy."
+            exit 0
+          fi
+          aws lambda update-function-code \
+            --function-name "$FOG_FN" \
+            --zip-file fileb://fog-lambda.zip
+          aws lambda wait function-updated --function-name "$FOG_FN"
+          echo "Updated Lambda: $FOG_FN"

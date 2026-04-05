@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thermal monitoring — {{ rack_id }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>Fog-enabled DC thermal monitor</h1>
+      <p class="sub">
+        Rack <strong>{{ rack_id }}</strong> · live refresh every
+        <strong>{{ poll_interval_ms // 1000 }}</strong>s
+      </p>
+      <p class="status" id="status-line">Connecting…</p>
+    </header>
+
+    <main class="layout">
+      <section class="cards" id="summary-cards" aria-live="polite"></section>
+
+      <section class="panel">
+        <h2>Recent readings (per sensor)</h2>
+        <p class="hint">Charts update with the same interval as summary cards.</p>
+        <div class="charts" id="charts-root"></div>
+      </section>
+    </main>
+
+    <script>
+      window.APP_CONFIG = {
+        rackId: {{ rack_id | tojson }},
+        pollIntervalMs: {{ poll_interval_ms | int }},
+      };
+    </script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  </body>
+</html>

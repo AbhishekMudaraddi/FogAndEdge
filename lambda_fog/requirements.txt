@@ -1,0 +1,2 @@
+# Lambda runtime includes boto3; pin only if you vendor dependencies for zip.
+boto3>=1.34.0
