@@ -243,8 +243,42 @@ def health():
             "layer": "cloud",
             "rack_id": RACK_ID,
             "mock_dynamodb": MOCK_DYNAMODB,
+            "aws_region": AWS_REGION,
+            "dynamodb_table_configured": bool(TABLE_NAME),
         }
     )
+
+
+@application.get("/api/diagnostics")
+def api_diagnostics():
+    """
+    Safe ops/debug: shows env config and whether a single DynamoDB Query works.
+    Open in browser when dashboard shows no data or chart errors.
+    """
+    out: dict[str, Any] = {
+        "rack_id": RACK_ID,
+        "aws_region": AWS_REGION,
+        "mock_dynamodb": MOCK_DYNAMODB,
+        "dynamodb_table_configured": bool(TABLE_NAME),
+        "table_name": TABLE_NAME if TABLE_NAME else None,
+    }
+    if MOCK_DYNAMODB:
+        out["note"] = "MOCK_DYNAMODB is on — data is fake. Unset on EB for real DynamoDB."
+        return jsonify(out)
+    if not TABLE_NAME:
+        out["query_error"] = (
+            "DYNAMODB_TABLE_NAME is empty. Add it under EB → Configuration → Software → "
+            "Environment properties, then restart the environment."
+        )
+        return jsonify(out)
+    try:
+        sample = query_sensor(RACK_ID, "rack_temperature", 1)
+        out["sample_query_ok"] = True
+        out["rack_temperature_rows_found"] = len(sample)
+    except Exception as e:
+        out["sample_query_ok"] = False
+        out["query_error"] = str(e)
+    return jsonify(out)
 
 
 if __name__ == "__main__":

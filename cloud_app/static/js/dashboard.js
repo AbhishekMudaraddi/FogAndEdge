@@ -135,15 +135,33 @@
 
   async function fetchJson(url) {
     const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) throw new Error(url + " " + r.status);
-    return r.json();
+    let body = null;
+    try {
+      body = await r.json();
+    } catch (_) {
+      body = null;
+    }
+    if (!r.ok) {
+      const detail =
+        body && typeof body.error === "string"
+          ? body.error
+          : body
+            ? JSON.stringify(body)
+            : "(no JSON body)";
+      throw new Error(r.status + " " + detail);
+    }
+    return body;
   }
 
   async function refreshAll() {
     try {
       const all = await fetchJson("/api/all-sensors");
       renderCards(all.latest || {});
-      setStatus("Last update: " + new Date().toLocaleTimeString(), true);
+      if (all.errors && all.errors.length) {
+        setStatus("DynamoDB issue: " + all.errors[0], false);
+      } else {
+        setStatus("Last update: " + new Date().toLocaleTimeString(), true);
+      }
     } catch (e) {
       setStatus("Summary error: " + e.message, false);
     }
@@ -161,8 +179,10 @@
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#f5a623";
-        ctx.font = "13px system-ui";
-        ctx.fillText("Chart error", 8, 24);
+        ctx.font = "11px system-ui";
+        const msg = (e && e.message) ? String(e.message).slice(0, 80) : "Chart error";
+        ctx.fillText("Chart error", 8, 16);
+        ctx.fillText(msg, 8, 32);
       }
     }
   }

@@ -158,6 +158,12 @@ def health():
     )
 
 
+@application.get("/health")
+def health_probe():
+    """Lightweight path for load balancer health checks (same info as /)."""
+    return health()
+
+
 @application.get("/debug/last-batch")
 def debug_last_batch():
     """Optional: inspect shape without SQS (same structure as published)."""
