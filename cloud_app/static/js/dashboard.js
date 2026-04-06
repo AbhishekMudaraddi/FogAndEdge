@@ -16,15 +16,21 @@
     outdoor_temperature: "Outdoor °C",
   };
 
+  /** Rack card red glow + chart guide + timed alerts use this °C threshold. */
+  const RACK_TEMP_ALERT_C = 35;
+
   const statusEl = document.getElementById("status-line");
   const rackGrid = document.getElementById("rack-grid");
   const chartsRoot = document.getElementById("charts-root");
   const chartsTitle = document.getElementById("charts-title");
   const insightEl = document.getElementById("rack-insight");
+  const alertsPanel = document.getElementById("alerts-panel");
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
   let chartState = {};
+  const overheatState = {}; // rack_id -> consecutive hot intervals (30s each)
+  let activeAlerts = [];
 
   function setStatus(text, ok) {
     if (!statusEl) return;
@@ -96,14 +102,54 @@
       const rc = riskCount(rackRow.latest);
       risk.textContent = rc > 0 ? `${rc} active risk flag(s)` : "No active risk flags";
       const tempRow = rackRow.latest && rackRow.latest.rack_temperature ? rackRow.latest.rack_temperature : null;
-      const highTemp = !!(tempRow && Number(tempRow.value) > 40);
-      if (highTemp || rc > 0) {
+      const highTemp = !!(tempRow && Number(tempRow.value) > RACK_TEMP_ALERT_C);
+      if (highTemp) {
         card.classList.add("alert");
       }
 
       card.append(title, stats, risk);
       rackGrid.append(card);
     }
+  }
+
+  function enqueueAlert(message) {
+    activeAlerts.unshift({
+      message,
+      ts: new Date().toLocaleTimeString(),
+    });
+    activeAlerts = activeAlerts.slice(0, 8);
+  }
+
+  function renderAlerts() {
+    if (!alertsPanel) return;
+    alertsPanel.innerHTML = "";
+    if (!activeAlerts.length) return;
+    for (const a of activeAlerts) {
+      const item = document.createElement("div");
+      item.className = "alert-item";
+      item.textContent = `[${a.ts}] ${a.message}`;
+      alertsPanel.appendChild(item);
+    }
+  }
+
+  function updateOverheatDurations(summary) {
+    for (const rackRow of summary.racks || []) {
+      const rid = rackRow.rack_id;
+      const tempRow = rackRow.latest && rackRow.latest.rack_temperature ? rackRow.latest.rack_temperature : null;
+      const hot = !!(tempRow && Number(tempRow.value) > RACK_TEMP_ALERT_C);
+      const prev = overheatState[rid] || 0;
+      const next = hot ? prev + 1 : 0;
+      overheatState[rid] = next;
+
+      if (next === 1) {
+        enqueueAlert(`${rackRow.label} overheating for 30 seconds (temp ${Number(tempRow.value).toFixed(2)}°C).`);
+      } else if (next === 2) {
+        enqueueAlert(`${rackRow.label} overheating for 60 seconds. Immediate cooling action recommended.`);
+      } else if (!hot && prev > 0) {
+        enqueueAlert(`${rackRow.label} temperature returned to normal range.`);
+      }
+    }
+    renderAlerts();
   }
 
   function drawLineChart(canvas, labels, values, sensorType) {
@@ -141,7 +187,7 @@
 
     // threshold guide line for quick interpretation.
     if (sensorType === "rack_temperature") {
-      const y = pad + (1 - (40 - min) / span) * (h - pad * 2);
+      const y = pad + (1 - (RACK_TEMP_ALERT_C - min) / span) * (h - pad * 2);
       if (y >= pad && y <= h - pad) {
         ctx.setLineDash([6, 4]);
         ctx.strokeStyle = "rgba(232,93,93,0.7)";
@@ -157,7 +203,7 @@
   function ensureChart(sensorType) {
     if (chartState[sensorType]) return chartState[sensorType];
     const box = document.createElement("div");
-    box.className = "chart-box";
+    box.className = "chart-box" + (sensorType === "rack_temperature" ? " chart-box--primary" : "");
     const h4 = document.createElement("h4");
     h4.textContent = LABELS[sensorType] || sensorType;
     const canvas = document.createElement("canvas");
@@ -181,6 +227,7 @@
   async function refreshSummary() {
     const data = await fetchJson("/api/racks-summary");
     renderRackCards(data);
+    updateOverheatDurations(data);
     if (data.errors && data.errors.length) {
       setStatus("Data issue: " + data.errors[0], false);
     } else {
@@ -205,8 +252,8 @@
           const delta = latest - prev;
           const trend = delta > 0 ? "rising" : delta < 0 ? "falling" : "stable";
           meta.textContent = `latest: ${latest.toFixed(2)} · trend: ${trend} (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} from previous sample)`;
-          if (st === "rack_temperature" && latest > 40) {
-            insightBits.push(`Rack temperature is critical at ${latest.toFixed(2)}°C (above 40°C threshold).`);
+          if (st === "rack_temperature" && latest > RACK_TEMP_ALERT_C) {
+            insightBits.push(`Rack temperature is elevated at ${latest.toFixed(2)}°C (above ${RACK_TEMP_ALERT_C}°C).`);
           }
           if (st === "airflow" && latest < 1.2) {
             insightBits.push(`Airflow dropped to ${latest.toFixed(2)} m/s, indicating possible cooling failure.`);

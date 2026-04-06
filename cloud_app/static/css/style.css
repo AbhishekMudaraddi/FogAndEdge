@@ -112,13 +112,32 @@ body {
   font-size: 0.9rem;
 }
 
+.alerts-panel {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.alert-item {
+  border: 1px solid rgba(232, 93, 93, 0.55);
+  border-left: 4px solid var(--danger);
+  background: rgba(232, 93, 93, 0.15);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.86rem;
+}
+
 .charts {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.9rem;
   max-height: 68vh;
   overflow-y: auto;
   padding-right: 0.2rem;
+}
+
+.chart-box--primary {
+  grid-column: 1 / -1;
 }
 
 .chart-box {
@@ -141,3 +160,9 @@ body {
 }
 
 .chart-box canvas { width: 100%; height: 220px; display: block; }
+
+@media (max-width: 980px) {
+  .charts {
+    grid-template-columns: 1fr;
+  }
+}
