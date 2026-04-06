@@ -16,8 +16,10 @@
     outdoor_temperature: "Outdoor °C",
   };
 
-  /** Rack card red glow + chart guide + timed alerts use this °C threshold. */
-  const RACK_TEMP_ALERT_C = 35;
+  /** Severity thresholds and anti-spam cooldown. */
+  const RACK_TEMP_WARN_C = 35;
+  const RACK_TEMP_CRIT_C = 40;
+  const ALERT_COOLDOWN_TICKS = 4; // with 30s refresh => 2 min cooldown
 
   const statusEl = document.getElementById("status-line");
   const rackGrid = document.getElementById("rack-grid");
@@ -30,7 +32,9 @@
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
   let chartState = {};
   const overheatState = {}; // rack_id -> consecutive hot intervals (30s each)
+  const rackAlertMeta = {}; // rack_id -> last alert metadata
   let activeAlerts = [];
+  let refreshTick = 0;
 
   function setStatus(text, ok) {
     if (!statusEl) return;
@@ -75,6 +79,36 @@
     return count;
   }
 
+  function extractLastTimestamp(latest) {
+    if (!latest) return null;
+    for (const key of SENSOR_ORDER) {
+      if (latest[key] && latest[key].timestamp) return String(latest[key].timestamp);
+    }
+    return null;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return ts;
+    return d.toLocaleTimeString();
+  }
+
+  function formatOverheatDuration(intervalCount) {
+    const secs = Math.max(0, (intervalCount || 0) * Math.round(POLL_MS / 1000));
+    if (secs === 0) return "0s";
+    if (secs < 60) return `${secs}s`;
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return s === 0 ? `${m}m` : `${m}m ${s}s`;
+  }
+
+  function tempLevel(value) {
+    if (value > RACK_TEMP_CRIT_C) return "critical";
+    if (value > RACK_TEMP_WARN_C) return "warning";
+    return "normal";
+  }
+
   function renderRackCards(summary) {
     rackGrid.innerHTML = "";
     for (const rackRow of summary.racks || []) {
@@ -100,16 +134,30 @@
       const risk = document.createElement("p");
       risk.className = "rack-risk";
       const rc = riskCount(rackRow.latest);
-      risk.textContent = rc > 0 ? `${rc} active risk flag(s)` : "No active risk flags";
       const tempRow = rackRow.latest && rackRow.latest.rack_temperature ? rackRow.latest.rack_temperature : null;
-      const highTemp = !!(tempRow && Number(tempRow.value) > RACK_TEMP_ALERT_C);
-      if (highTemp) {
+      const tempVal = tempRow ? Number(tempRow.value) : null;
+      const level = tempVal === null ? "normal" : tempLevel(tempVal);
+      const statusLabel = level === "critical" ? "Critical" : level === "warning" ? "Warning" : "Normal";
+      risk.textContent = `Status: ${statusLabel} · ${rc > 0 ? `${rc} active risk flag(s)` : "No active risk flags"}`;
+
+      const metrics = document.createElement("div");
+      metrics.className = "rack-metrics";
+      const lastTs = extractLastTimestamp(rackRow.latest);
+      const hotIntervals = overheatState[rackRow.rack_id] || 0;
+      metrics.innerHTML =
+        `<div><span>Last Update</span><strong>${formatTime(lastTs)}</strong></div>` +
+        `<div><span>Overheat Duration</span><strong>${formatOverheatDuration(hotIntervals)}</strong></div>` +
+        `<div><span>Risk Status</span><strong>${statusLabel}</strong></div>`;
+
+      if (level === "critical") {
         card.classList.add("alert");
+      } else if (level === "warning") {
+        card.classList.add("warning");
       } else {
         card.classList.add("ok");
       }
 
-      card.append(title, stats, risk);
+      card.append(title, stats, metrics, risk);
       rackGrid.append(card);
     }
   }
@@ -117,7 +165,7 @@
   function enqueueAlert(message, level) {
     activeAlerts.unshift({
       message,
-      level: level || "danger",
+      level: level || "critical",
       ts: new Date().toLocaleTimeString(),
     });
     activeAlerts = activeAlerts.slice(0, 5);
@@ -129,28 +177,58 @@
     if (!activeAlerts.length) return;
     for (const a of activeAlerts) {
       const item = document.createElement("div");
-      item.className = "alert-item" + (a.level === "ok" ? " ok" : "");
+      item.className = "alert-item";
+      if (a.level === "ok") item.classList.add("ok");
+      if (a.level === "warning") item.classList.add("warning");
+      if (a.level === "critical") item.classList.add("critical");
       item.textContent = `[${a.ts}] ${a.message}`;
       alertsPanel.appendChild(item);
     }
   }
 
   function updateOverheatDurations(summary) {
+    refreshTick += 1;
     for (const rackRow of summary.racks || []) {
       const rid = rackRow.rack_id;
       const tempRow = rackRow.latest && rackRow.latest.rack_temperature ? rackRow.latest.rack_temperature : null;
-      const hot = !!(tempRow && Number(tempRow.value) > RACK_TEMP_ALERT_C);
+      const tempVal = tempRow ? Number(tempRow.value) : null;
+      const level = tempVal === null ? "normal" : tempLevel(tempVal);
+      const hot = level !== "normal";
       const prev = overheatState[rid] || 0;
       const next = hot ? prev + 1 : 0;
       overheatState[rid] = next;
+      const meta = rackAlertMeta[rid] || {
+        lastLevel: "normal",
+        lastWarnTick: -9999,
+        lastCritTick: -9999,
+        lastRecoveryTick: -9999,
+      };
+      const canWarn = refreshTick - meta.lastWarnTick >= ALERT_COOLDOWN_TICKS;
+      const canCrit = refreshTick - meta.lastCritTick >= ALERT_COOLDOWN_TICKS;
+      const canRecover = refreshTick - meta.lastRecoveryTick >= ALERT_COOLDOWN_TICKS;
 
-      if (next === 1) {
-        enqueueAlert(`${rackRow.label} overheating for 30 seconds (temp ${Number(tempRow.value).toFixed(2)}°C).`, "danger");
-      } else if (next === 2) {
-        enqueueAlert(`${rackRow.label} overheating for 60 seconds. Immediate cooling action recommended.`, "danger");
-      } else if (!hot && prev > 0) {
-        enqueueAlert(`${rackRow.label} temperature returned to normal range.`, "ok");
+      if (level === "warning" && meta.lastLevel === "normal" && canWarn) {
+        enqueueAlert(`${rackRow.label} warning: rack temperature reached ${tempVal.toFixed(2)}°C (>= ${RACK_TEMP_WARN_C}°C).`, "warning");
+        meta.lastWarnTick = refreshTick;
       }
+
+      if (level === "critical" && meta.lastLevel !== "critical" && canCrit) {
+        enqueueAlert(`${rackRow.label} critical: rack temperature is ${tempVal.toFixed(2)}°C (>= ${RACK_TEMP_CRIT_C}°C).`, "critical");
+        meta.lastCritTick = refreshTick;
+      }
+
+      if (next === 1 && hot && canWarn) {
+        enqueueAlert(`${rackRow.label} overheating for 30 seconds (temp ${tempVal.toFixed(2)}°C).`, level === "critical" ? "critical" : "warning");
+        meta.lastWarnTick = refreshTick;
+      } else if (next === 2 && hot && canCrit) {
+        enqueueAlert(`${rackRow.label} overheating for 60 seconds. Immediate cooling action recommended.`, level === "critical" ? "critical" : "warning");
+        meta.lastCritTick = refreshTick;
+      } else if (!hot && prev > 0 && canRecover) {
+        enqueueAlert(`${rackRow.label} temperature returned to normal range.`, "ok");
+        meta.lastRecoveryTick = refreshTick;
+      }
+      meta.lastLevel = level;
+      rackAlertMeta[rid] = meta;
     }
     renderAlerts();
   }
@@ -190,13 +268,23 @@
 
     // threshold guide line for quick interpretation.
     if (sensorType === "rack_temperature") {
-      const y = pad + (1 - (RACK_TEMP_ALERT_C - min) / span) * (h - pad * 2);
-      if (y >= pad && y <= h - pad) {
+      const yWarn = pad + (1 - (RACK_TEMP_WARN_C - min) / span) * (h - pad * 2);
+      const yCrit = pad + (1 - (RACK_TEMP_CRIT_C - min) / span) * (h - pad * 2);
+      if (yWarn >= pad && yWarn <= h - pad) {
         ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "rgba(232,93,93,0.7)";
+        ctx.strokeStyle = "rgba(245,166,35,0.8)";
         ctx.beginPath();
-        ctx.moveTo(pad, y);
-        ctx.lineTo(w - pad, y);
+        ctx.moveTo(pad, yWarn);
+        ctx.lineTo(w - pad, yWarn);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (yCrit >= pad && yCrit <= h - pad) {
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = "rgba(232,93,93,0.8)";
+        ctx.beginPath();
+        ctx.moveTo(pad, yCrit);
+        ctx.lineTo(w - pad, yCrit);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -229,8 +317,8 @@
 
   async function refreshSummary() {
     const data = await fetchJson("/api/racks-summary");
-    renderRackCards(data);
     updateOverheatDurations(data);
+    renderRackCards(data);
     if (data.errors && data.errors.length) {
       setStatus("Data issue: " + data.errors[0], false);
     } else {
@@ -255,8 +343,10 @@
           const delta = latest - prev;
           const trend = delta > 0 ? "rising" : delta < 0 ? "falling" : "stable";
           meta.textContent = `latest: ${latest.toFixed(2)} · trend: ${trend} (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} from previous sample)`;
-          if (st === "rack_temperature" && latest > RACK_TEMP_ALERT_C) {
-            insightBits.push(`Rack temperature is elevated at ${latest.toFixed(2)}°C (above ${RACK_TEMP_ALERT_C}°C).`);
+          if (st === "rack_temperature" && latest >= RACK_TEMP_CRIT_C) {
+            insightBits.push(`Rack temperature is CRITICAL at ${latest.toFixed(2)}°C (>= ${RACK_TEMP_CRIT_C}°C).`);
+          } else if (st === "rack_temperature" && latest >= RACK_TEMP_WARN_C) {
+            insightBits.push(`Rack temperature is in WARNING at ${latest.toFixed(2)}°C (>= ${RACK_TEMP_WARN_C}°C).`);
           }
           if (st === "airflow" && latest < 1.2) {
             insightBits.push(`Airflow dropped to ${latest.toFixed(2)} m/s, indicating possible cooling failure.`);
