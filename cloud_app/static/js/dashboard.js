@@ -105,6 +105,8 @@
       const highTemp = !!(tempRow && Number(tempRow.value) > RACK_TEMP_ALERT_C);
       if (highTemp) {
         card.classList.add("alert");
+      } else {
+        card.classList.add("ok");
       }
 
       card.append(title, stats, risk);
@@ -117,7 +119,7 @@
       message,
       ts: new Date().toLocaleTimeString(),
     });
-    activeAlerts = activeAlerts.slice(0, 8);
+    activeAlerts = activeAlerts.slice(0, 5);
   }
 
   function renderAlerts() {
