@@ -109,7 +109,7 @@ Upload the zip in the EB console (or CLI). Ensure the platform is **Python** and
 4. **Lambda:** Create function from `lambda_fog/lambda_function.py`, set handler `lambda_function.lambda_handler`, env `DYNAMODB_TABLE_NAME`, add SQS trigger.
 5. **IAM for EB instances (edge):** Instance profile allowing `sqs:SendMessage` on the queue ARN.
 6. **IAM for EB instances (cloud):** Instance profile allowing `dynamodb:Query` (and optionally `dynamodb:DescribeTable`) on the table ARN.
-7. **Two EB environments:** Create **one** Elastic Beanstalk **application** (e.g. `dc-thermal`) and **two environments** inside it (e.g. `dc-thermal-edge` and `dc-thermal-cloud`). When you create each environment, pick **Python 3.12 on Amazon Linux 2023** (or align `runtime.txt` with the platform you choose). You can start from the sample app; the first GitHub deploy will replace it with this project.
+7. **Two EB environments:** Create **one** Elastic Beanstalk **application** (e.g. `dc-thermal`) and **two environments** inside it (e.g. `dc-thermal-edge` and `dc-thermal-cloud`). Pick a supported Python platform in your region (Amazon Linux 2023). This repo does **not** pin `runtime.txt`, so deployments follow the EB environment platform version directly.
 
 ## GitHub Actions — deploy on every push
 
