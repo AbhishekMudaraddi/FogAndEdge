@@ -114,9 +114,10 @@
     }
   }
 
-  function enqueueAlert(message) {
+  function enqueueAlert(message, level) {
     activeAlerts.unshift({
       message,
+      level: level || "danger",
       ts: new Date().toLocaleTimeString(),
     });
     activeAlerts = activeAlerts.slice(0, 5);
@@ -128,7 +129,7 @@
     if (!activeAlerts.length) return;
     for (const a of activeAlerts) {
       const item = document.createElement("div");
-      item.className = "alert-item";
+      item.className = "alert-item" + (a.level === "ok" ? " ok" : "");
       item.textContent = `[${a.ts}] ${a.message}`;
       alertsPanel.appendChild(item);
     }
@@ -144,11 +145,11 @@
       overheatState[rid] = next;
 
       if (next === 1) {
-        enqueueAlert(`${rackRow.label} overheating for 30 seconds (temp ${Number(tempRow.value).toFixed(2)}°C).`);
+        enqueueAlert(`${rackRow.label} overheating for 30 seconds (temp ${Number(tempRow.value).toFixed(2)}°C).`, "danger");
       } else if (next === 2) {
-        enqueueAlert(`${rackRow.label} overheating for 60 seconds. Immediate cooling action recommended.`);
+        enqueueAlert(`${rackRow.label} overheating for 60 seconds. Immediate cooling action recommended.`, "danger");
       } else if (!hot && prev > 0) {
-        enqueueAlert(`${rackRow.label} temperature returned to normal range.`);
+        enqueueAlert(`${rackRow.label} temperature returned to normal range.`, "ok");
       }
     }
     renderAlerts();
@@ -238,7 +239,7 @@
   }
 
   async function refreshCharts() {
-    chartsTitle.textContent = `Key trends — ${rackName(selectedRackId)}`;
+    chartsTitle.textContent = `Details of ${rackName(selectedRackId)}`;
     const insightBits = [];
     for (const st of SENSOR_ORDER) {
       try {
