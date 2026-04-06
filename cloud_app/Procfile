@@ -1,1 +1,1 @@
-web: gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 4 application:application
+web: gunicorn --bind 0.0.0.0:8000 --workers 1 --worker-class gthread --threads 4 application:application
