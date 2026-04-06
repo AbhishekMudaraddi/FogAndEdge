@@ -99,3 +99,61 @@ jobs:
             --zip-file fileb://fog-lambda.zip
           aws lambda wait function-updated --function-name "$FOG_FN"
           echo "Updated Lambda: $FOG_FN"
+
+  sync-eb-env:
+    name: Sync EB environment variables
+    runs-on: ubuntu-latest
+    needs: [deploy-edge, deploy-cloud]
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Apply edge environment variables
+        env:
+          EDGE_ENV: ${{ secrets.EB_EDGE_ENVIRONMENT_NAME }}
+          AWS_REGION_VAL: ${{ secrets.AWS_REGION }}
+          SQS_QUEUE_URL: ${{ secrets.SQS_QUEUE_URL }}
+          RACK_ID: ${{ secrets.RACK_ID }}
+          RACK_IDS: ${{ secrets.RACK_IDS }}
+          DATACENTER_ID: ${{ secrets.DATACENTER_ID }}
+          SENSOR_FREQUENCY: ${{ secrets.SENSOR_FREQUENCY }}
+          DISPATCH_RATE: ${{ secrets.DISPATCH_RATE }}
+        run: |
+          if [ -z "$EDGE_ENV" ] || [ -z "$SQS_QUEUE_URL" ]; then
+            echo "Skipping edge env sync (missing EB_EDGE_ENVIRONMENT_NAME or SQS_QUEUE_URL secret)."
+            exit 0
+          fi
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EDGE_ENV" \
+            --option-settings \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=SQS_QUEUE_URL,Value="$SQS_QUEUE_URL" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=AWS_REGION,Value="${AWS_REGION_VAL}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=RACK_ID,Value="${RACK_ID:-rack_01}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=RACK_IDS,Value="${RACK_IDS:-rack_01,rack_02,rack_03}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=DATACENTER_ID,Value="${DATACENTER_ID:-DC-01}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=SENSOR_FREQUENCY,Value="${SENSOR_FREQUENCY:-30}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=DISPATCH_RATE,Value="${DISPATCH_RATE:-1}"
+
+      - name: Apply cloud environment variables
+        env:
+          CLOUD_ENV: ${{ secrets.EB_CLOUD_ENVIRONMENT_NAME }}
+          AWS_REGION_VAL: ${{ secrets.AWS_REGION }}
+          TABLE_NAME: ${{ secrets.DYNAMODB_TABLE_NAME }}
+          RACK_ID: ${{ secrets.RACK_ID }}
+          RACK_IDS: ${{ secrets.RACK_IDS }}
+        run: |
+          if [ -z "$CLOUD_ENV" ] || [ -z "$TABLE_NAME" ]; then
+            echo "Skipping cloud env sync (missing EB_CLOUD_ENVIRONMENT_NAME or DYNAMODB_TABLE_NAME secret)."
+            exit 0
+          fi
+          aws elasticbeanstalk update-environment \
+            --environment-name "$CLOUD_ENV" \
+            --option-settings \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=DYNAMODB_TABLE_NAME,Value="$TABLE_NAME" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=AWS_REGION,Value="${AWS_REGION_VAL}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=RACK_ID,Value="${RACK_ID:-rack_01}" \
+              Namespace=aws:elasticbeanstalk:application:environment,OptionName=RACK_IDS,Value="${RACK_IDS:-rack_01,rack_02,rack_03}"

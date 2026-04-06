@@ -51,9 +51,12 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
-SENSOR_FREQUENCY = _env_float("SENSOR_FREQUENCY", 1.0)
+SENSOR_FREQUENCY = _env_float("SENSOR_FREQUENCY", 30.0)
 DISPATCH_RATE = max(1, _env_int("DISPATCH_RATE", 1))
-RACK_ID = os.environ.get("RACK_ID", "rack_01")
+RACK_IDS_RAW = os.environ.get("RACK_IDS", "rack_01,rack_02,rack_03")
+RACK_IDS = tuple(x.strip() for x in RACK_IDS_RAW.split(",") if x.strip())
+if not RACK_IDS:
+    RACK_IDS = ("rack_01", "rack_02", "rack_03")
 DATACENTER_ID = os.environ.get("DATACENTER_ID", "DC-01")
 # Prefer rack_id on each reading; datacenter_id optional for dashboards
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "").strip()
@@ -87,20 +90,21 @@ def _random_value(sensor_type: str) -> float:
 
 
 def build_reading_batch() -> list[dict[str, Any]]:
-    """One batch: exactly five readings, shared ISO timestamp (UTC)."""
+    """One batch: 5 readings per rack, shared ISO timestamp (UTC)."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     batch = []
-    for st in SENSOR_TYPES:
-        batch.append(
-            {
-                "sensor_type": st,
-                "value": _random_value(st),
-                "unit": UNITS[st],
-                "timestamp": ts,
-                "rack_id": RACK_ID,
-                "datacenter_id": DATACENTER_ID,
-            }
-        )
+    for rack_id in RACK_IDS:
+        for st in SENSOR_TYPES:
+            batch.append(
+                {
+                    "sensor_type": st,
+                    "value": _random_value(st),
+                    "unit": UNITS[st],
+                    "timestamp": ts,
+                    "rack_id": rack_id,
+                    "datacenter_id": DATACENTER_ID,
+                }
+            )
     return batch
 
 
@@ -150,10 +154,11 @@ def health():
         {
             "status": "ok",
             "layer": "edge",
-            "rack_id": RACK_ID,
+            "rack_ids": list(RACK_IDS),
             "sqs_configured": bool(SQS_QUEUE_URL),
             "sensor_frequency_s": SENSOR_FREQUENCY,
             "dispatch_every_n_cycles": DISPATCH_RATE,
+            "readings_per_batch": len(SENSOR_TYPES) * len(RACK_IDS),
         }
     )
 

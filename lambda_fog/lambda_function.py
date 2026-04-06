@@ -124,15 +124,21 @@ def process_records(records: list[dict[str, Any]], now_epoch: int) -> None:
                 logger.warning("Skip bad message: %s", e)
                 continue
 
-            by_type = index_by_type(readings)
-            derived = compute_batch_derived(by_type)
-
+            # If one SQS message contains multiple racks, compute derived flags per rack.
+            grouped: dict[str, list[dict[str, Any]]] = {}
             for reading in readings:
-                try:
-                    item = enrich_item(reading, derived, expiry_ts)
-                    batch.put_item(Item=item)
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.warning("Skip reading: %s data=%s", e, reading)
+                rack = str(reading.get("rack_id") or reading.get("datacenter_id") or "unknown")
+                grouped.setdefault(rack, []).append(reading)
+
+            for _rack, rack_readings in grouped.items():
+                by_type = index_by_type(rack_readings)
+                derived = compute_batch_derived(by_type)
+                for reading in rack_readings:
+                    try:
+                        item = enrich_item(reading, derived, expiry_ts)
+                        batch.put_item(Item=item)
+                    except (KeyError, ValueError, TypeError) as e:
+                        logger.warning("Skip reading: %s data=%s", e, reading)
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:

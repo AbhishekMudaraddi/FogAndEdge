@@ -1,6 +1,7 @@
 :root {
   --bg: #0f1419;
   --surface: #1a2332;
+  --surface2: #121a26;
   --text: #e7ecf3;
   --muted: #8b9bb4;
   --accent: #3d9cf5;
@@ -10,135 +11,133 @@
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .header {
-  padding: 1.25rem 1.5rem;
+  padding: 1.1rem 1.4rem;
   border-bottom: 1px solid #2a3545;
 }
 
 .header h1 {
   margin: 0 0 0.25rem;
-  font-size: 1.35rem;
-  font-weight: 600;
+  font-size: 1.3rem;
 }
 
-.sub {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.status {
-  margin: 0.75rem 0 0;
-  font-size: 0.85rem;
-  color: var(--accent);
-}
+.sub, .status { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.status { margin-top: 0.55rem; color: var(--accent); }
 
 .layout {
-  padding: 1.25rem 1.5rem 2rem;
-  max-width: 1200px;
+  padding: 1.2rem 1.4rem 2rem;
+  max-width: 1300px;
   margin: 0 auto;
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.card {
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 1rem;
-  border: 1px solid #2a3545;
-}
-
-.card h3 {
-  margin: 0 0 0.35rem;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  font-weight: 600;
-}
-
-.card .value {
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.card .unit {
-  font-size: 0.9rem;
-  color: var(--muted);
-  margin-left: 0.15rem;
-}
-
-.card .flags {
-  margin-top: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.flag-on {
-  color: var(--danger);
 }
 
 .panel {
   background: var(--surface);
   border-radius: 12px;
-  padding: 1rem 1.25rem;
+  padding: 1rem 1.1rem;
   border: 1px solid #2a3545;
+  margin-bottom: 1rem;
 }
 
-.panel h2 {
-  margin: 0 0 0.35rem;
-  font-size: 1.05rem;
+.panel h2 { margin: 0 0 0.3rem; font-size: 1.02rem; }
+.hint { margin: 0 0 0.9rem; color: var(--muted); font-size: 0.85rem; }
+
+.rack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.75rem;
 }
 
-.hint {
-  margin: 0 0 1rem;
-  font-size: 0.85rem;
+.rack-card {
+  text-align: left;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid #2a3545;
+  border-radius: 10px;
+  padding: 0.85rem;
+  cursor: pointer;
+}
+
+.rack-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(61, 156, 245, 0.4) inset;
+}
+
+.rack-card.alert {
+  border-color: rgba(232, 93, 93, 0.9);
+  box-shadow: 0 0 18px rgba(232, 93, 93, 0.35), 0 0 0 1px rgba(232, 93, 93, 0.5) inset;
+}
+
+.rack-card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+
+.rack-stats {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.rack-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+}
+
+.rack-stats span { color: var(--muted); }
+.rack-stats strong { font-weight: 600; }
+
+.rack-risk {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
   color: var(--muted);
+}
+
+.rack-insight {
+  border: 1px solid #2a3545;
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: #162234;
+  padding: 0.7rem 0.8rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.9rem;
 }
 
 .charts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
+  grid-template-columns: 1fr;
+  gap: 0.9rem;
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 0.2rem;
 }
 
 .chart-box {
-  background: #121a26;
-  border-radius: 8px;
-  padding: 0.75rem;
+  background: var(--surface2);
   border: 1px solid #2a3545;
+  border-radius: 8px;
+  padding: 0.7rem;
 }
 
 .chart-box h4 {
   margin: 0 0 0.5rem;
-  font-size: 0.85rem;
+  font-size: 0.92rem;
   color: var(--muted);
-  font-weight: 600;
 }
 
-.chart-box canvas {
-  width: 100%;
-  height: 140px;
-  display: block;
+.chart-box .meta {
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
-.empty {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
+.chart-box canvas { width: 100%; height: 220px; display: block; }

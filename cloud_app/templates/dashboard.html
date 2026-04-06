@@ -3,32 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Thermal monitoring — {{ rack_id }}</title>
+    <title>Thermal monitoring</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   </head>
   <body>
     <header class="header">
-      <h1>Fog-enabled DC thermal monitor</h1>
-      <p class="sub">
-        Rack <strong>{{ rack_id }}</strong> · live refresh every
-        <strong>{{ poll_interval_ms // 1000 }}</strong>s
-      </p>
+      <h1>Fog-enabled data center thermal monitor</h1>
+      <p class="sub">3 racks · 5 sensors each · refresh every {{ poll_interval_ms // 1000 }}s</p>
       <p class="status" id="status-line">Connecting…</p>
     </header>
 
     <main class="layout">
-      <section class="cards" id="summary-cards" aria-live="polite"></section>
+      <section class="panel">
+        <h2>Rack overview</h2>
+        <p class="hint">Click a rack card to focus graphs below.</p>
+        <div id="rack-grid" class="rack-grid" aria-live="polite"></div>
+      </section>
 
       <section class="panel">
-        <h2>Recent readings (per sensor)</h2>
-        <p class="hint">Charts update with the same interval as summary cards.</p>
+        <h2 id="charts-title">Key trends</h2>
+        <p class="hint">Detailed, scrollable charts and auto-generated interpretation for selected rack.</p>
+        <div id="rack-insight" class="rack-insight"></div>
         <div class="charts" id="charts-root"></div>
       </section>
     </main>
 
     <script>
       window.APP_CONFIG = {
-        rackId: {{ rack_id | tojson }},
+        defaultRackId: {{ rack_id | tojson }},
+        rackIds: {{ rack_ids | tojson }},
         pollIntervalMs: {{ poll_interval_ms | int }},
       };
     </script>

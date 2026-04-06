@@ -142,6 +142,13 @@ In GitHub: **Settings → Secrets and variables → Actions → New repository s
 | `EB_EDGE_ENVIRONMENT_NAME` | Environment that runs **edge_app** |
 | `EB_CLOUD_ENVIRONMENT_NAME` | Environment that runs **cloud_app** |
 | `FOG_LAMBDA_FUNCTION_NAME` | *(Optional)* Lambda function name; if omitted, the Lambda job skips |
+| `SQS_QUEUE_URL` | Used to auto-sync edge env vars on each push |
+| `DYNAMODB_TABLE_NAME` | Used to auto-sync cloud env vars on each push |
+| `RACK_ID` | Optional override (default `rack_01`) |
+| `RACK_IDS` | Optional override (default `rack_01,rack_02,rack_03`) |
+| `DATACENTER_ID` | Optional override (default `DC-01`) |
+| `SENSOR_FREQUENCY` | Optional override (default `30`) |
+| `DISPATCH_RATE` | Optional override (default `1`) |
 
 If you use temporary credentials (e.g. assumed role), extend the workflow to pass `aws_session_token` / OIDC; long‑lived access keys do not need a session token.
 
@@ -157,7 +164,8 @@ The **EC2 instance profile** attached to each EB environment is separate: edge n
 
 ### 4. Elastic Beanstalk environment properties (console)
 
-After the first successful deploy, set **Configuration → Software → Environment properties** (names must match what the code reads):
+After the first successful deploy, set **Configuration → Software → Environment properties** (names must match what the code reads).  
+If you configured the secrets above, the workflow now auto-syncs these properties on every push.
 
 **Edge environment**
 
