@@ -42,8 +42,6 @@
         pollIntervalMs: {{ poll_interval_ms | int }},
       };
     </script>
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-
     <div id="rack-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rack-modal-title">
       <div class="modal-backdrop" data-close-modal="1"></div>
       <section class="modal-content">
@@ -53,5 +51,6 @@
         <div id="rack-modal-body" class="modal-body"></div>
       </section>
     </div>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
   </body>
 </html>
