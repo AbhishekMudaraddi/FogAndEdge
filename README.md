@@ -74,7 +74,7 @@ If `SQS_QUEUE_URL` is **unset**, the worker still runs but **skips** sending (lo
 | **Fog (Lambda)** | Parses each SQS message; groups by `rack_id`; computes **derived fields** (`cooling_efficiency`, `overheating`, `cooling_failure`, `static_risk`); sets **TTL**; writes enriched items to **DynamoDB** via `batch_writer`. |
 | **Cloud** | **Reads** DynamoDB only; REST API + dashboard; **aggregates** (means, charts, trends) in the UI — it **does not** recompute fog formulas; it displays values stored by Lambda. |
 
-The dashboard includes a collapsible **“Edge, fog, and cloud”** note and shows **Fog: cooling η** plus a **Fog layer output** table in the rack modal so markers can see enrichment without opening AWS consoles.
+The main dashboard shows KPIs, a status pie chart, up to **three** recent time-stamped alerts, and rack cards (all key sensors, fog cooling η, narrative, overheat duration). **View details** opens a modal with trend charts and tables. Fog enrichment is also in DynamoDB and **CloudWatch** logs (`enrichment_batch`).
 
 ## Fog visibility in CloudWatch (structured logs)
 
