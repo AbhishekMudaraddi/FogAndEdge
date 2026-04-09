@@ -16,15 +16,22 @@
     <main class="layout">
       <section class="panel">
         <h2>Rack overview</h2>
-        <p class="hint">Click a rack card to focus graphs below.</p>
+        <p class="hint">Click a rack card to focus graphs below. Use "View details" for full rack diagnostics.</p>
+        <div class="overview-analytics">
+          <div id="overview-kpis" class="overview-kpis" aria-live="polite"></div>
+          <div class="overview-pie-wrap">
+            <h3>Rack status distribution</h3>
+            <canvas id="overview-pie" width="360" height="180"></canvas>
+          </div>
+        </div>
         <div id="rack-grid" class="rack-grid" aria-live="polite"></div>
       </section>
 
       <section class="panel">
-        <h2 id="charts-title">Details of rack</h2>
+        <h2 id="charts-title">Overall analysis and rack details</h2>
         <div id="rack-insight" class="rack-insight"></div>
         <div id="alerts-panel" class="alerts-panel" aria-live="polite"></div>
-        <div class="charts" id="charts-root"></div>
+        <div id="rack-details-list" class="rack-details-list" aria-live="polite"></div>
       </section>
     </main>
 
@@ -36,5 +43,15 @@
       };
     </script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+    <div id="rack-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rack-modal-title">
+      <div class="modal-backdrop" data-close-modal="1"></div>
+      <section class="modal-content">
+        <button type="button" id="rack-modal-close" class="modal-close" aria-label="Close">×</button>
+        <h3 id="rack-modal-title">Rack details</h3>
+        <p id="rack-modal-sub" class="modal-sub">Loading...</p>
+        <div id="rack-modal-body" class="modal-body"></div>
+      </section>
+    </div>
   </body>
 </html>

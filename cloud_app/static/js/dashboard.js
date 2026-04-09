@@ -20,17 +20,30 @@
   const RACK_TEMP_WARN_C = 35;
   const RACK_TEMP_CRIT_C = 40;
   const ALERT_COOLDOWN_TICKS = 4; // with 30s refresh => 2 min cooldown
+  const SENSOR_THRESHOLDS = {
+    rack_temperature: { warnHigh: 35, critHigh: 40 },
+    room_temperature: { warnHigh: 26, critHigh: 30 },
+    humidity: { warnLow: 30, warnHigh: 60, critLow: 20, critHigh: 75 },
+    airflow: { warnLow: 1.5, critLow: 1.2 },
+    outdoor_temperature: { warnHigh: 35, critHigh: 42, warnLow: -5, critLow: -10 },
+  };
 
   const statusEl = document.getElementById("status-line");
   const rackGrid = document.getElementById("rack-grid");
-  const chartsRoot = document.getElementById("charts-root");
   const chartsTitle = document.getElementById("charts-title");
   const insightEl = document.getElementById("rack-insight");
   const alertsPanel = document.getElementById("alerts-panel");
+  const rackDetailsList = document.getElementById("rack-details-list");
+  const overviewKpis = document.getElementById("overview-kpis");
+  const overviewPie = document.getElementById("overview-pie");
+  const rackModal = document.getElementById("rack-modal");
+  const rackModalClose = document.getElementById("rack-modal-close");
+  const rackModalTitle = document.getElementById("rack-modal-title");
+  const rackModalSub = document.getElementById("rack-modal-sub");
+  const rackModalBody = document.getElementById("rack-modal-body");
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
-  let chartState = {};
   const overheatState = {}; // rack_id -> consecutive hot intervals (30s each)
   const rackAlertMeta = {}; // rack_id -> last alert metadata
   let activeAlerts = [];
@@ -109,16 +122,128 @@
     return "normal";
   }
 
+  function classifySensor(sensorType, value) {
+    const t = SENSOR_THRESHOLDS[sensorType];
+    if (!t || typeof value !== "number" || Number.isNaN(value)) return "normal";
+    if ((t.critHigh !== undefined && value >= t.critHigh) || (t.critLow !== undefined && value <= t.critLow)) return "critical";
+    if ((t.warnHigh !== undefined && value >= t.warnHigh) || (t.warnLow !== undefined && value <= t.warnLow)) return "warning";
+    return "normal";
+  }
+
+  function rackStatusFromLatest(latest) {
+    let status = "normal";
+    for (const st of SENSOR_ORDER) {
+      const item = latest && latest[st] ? latest[st] : null;
+      if (!item) continue;
+      const cls = classifySensor(st, Number(item.value));
+      if (cls === "critical") return "critical";
+      if (cls === "warning") status = "warning";
+    }
+    return status;
+  }
+
+  function drawOverviewPie(counts) {
+    if (!overviewPie) return;
+    const ctx = overviewPie.getContext("2d");
+    const w = overviewPie.width;
+    const h = overviewPie.height;
+    const cx = 96;
+    const cy = h / 2;
+    const r = 62;
+    const total = Math.max(1, counts.normal + counts.warning + counts.critical);
+    ctx.clearRect(0, 0, w, h);
+    const slices = [
+      { key: "normal", label: "Normal", color: "#3ddc97", value: counts.normal },
+      { key: "warning", label: "Warning", color: "#f5a623", value: counts.warning },
+      { key: "critical", label: "Critical", color: "#e85d5d", value: counts.critical },
+    ];
+    let start = -Math.PI / 2;
+    for (const s of slices) {
+      const angle = (s.value / total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, start + angle);
+      ctx.closePath();
+      ctx.fillStyle = s.color;
+      ctx.fill();
+      start += angle;
+    }
+    ctx.beginPath();
+    ctx.fillStyle = "#121a26";
+    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e7ecf3";
+    ctx.font = "bold 16px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(String(counts.normal + counts.warning + counts.critical), cx, cy + 6);
+
+    ctx.textAlign = "left";
+    ctx.font = "12px system-ui";
+    const lx = 190;
+    let ly = 54;
+    for (const s of slices) {
+      ctx.fillStyle = s.color;
+      ctx.fillRect(lx, ly - 9, 10, 10);
+      ctx.fillStyle = "#c9d4e5";
+      ctx.fillText(`${s.label}: ${s.value}`, lx + 16, ly);
+      ly += 28;
+    }
+  }
+
+  function renderOverview(summary) {
+    const rows = summary.racks || [];
+    let totalTemp = 0;
+    let tempCount = 0;
+    let maxTemp = -Infinity;
+    let maxRack = null;
+    let riskRacks = 0;
+    const statusCounts = { normal: 0, warning: 0, critical: 0 };
+    for (const row of rows) {
+      const tempItem = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
+      const temp = tempItem ? Number(tempItem.value) : NaN;
+      if (!Number.isNaN(temp)) {
+        totalTemp += temp;
+        tempCount += 1;
+        if (temp > maxTemp) {
+          maxTemp = temp;
+          maxRack = row.label;
+        }
+      }
+      if (riskCount(row.latest) > 0) riskRacks += 1;
+      const status = rackStatusFromLatest(row.latest);
+      statusCounts[status] += 1;
+    }
+    if (overviewKpis) {
+      const avgText = tempCount ? `${(totalTemp / tempCount).toFixed(2)} °C` : "—";
+      const maxText = maxRack && Number.isFinite(maxTemp) ? `${maxRack} (${maxTemp.toFixed(2)} °C)` : "—";
+      overviewKpis.innerHTML =
+        `<article class="kpi-card"><h4>Total Racks</h4><strong>${rows.length}</strong></article>` +
+        `<article class="kpi-card"><h4>Avg Rack Temp</h4><strong>${avgText}</strong></article>` +
+        `<article class="kpi-card"><h4>Racks With Risk</h4><strong>${riskRacks}</strong></article>` +
+        `<article class="kpi-card"><h4>Hottest Rack</h4><strong>${maxText}</strong></article>`;
+    }
+    drawOverviewPie(statusCounts);
+  }
+
   function renderRackCards(summary) {
     rackGrid.innerHTML = "";
     for (const rackRow of summary.racks || []) {
-      const card = document.createElement("button");
-      card.type = "button";
+      const card = document.createElement("article");
       card.className = "rack-card" + (rackRow.rack_id === selectedRackId ? " selected" : "");
-      card.addEventListener("click", () => {
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+      card.addEventListener("click", async () => {
         selectedRackId = rackRow.rack_id;
         renderRackCards(summary);
-        refreshCharts();
+        await openRackModal(rackRow.rack_id, rackRow.label, rackRow.latest);
+      });
+      card.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter" || evt.key === " ") {
+          evt.preventDefault();
+          selectedRackId = rackRow.rack_id;
+          renderRackCards(summary);
+          openRackModal(rackRow.rack_id, rackRow.label, rackRow.latest);
+        }
       });
 
       const title = document.createElement("h3");
@@ -157,9 +282,154 @@
         card.classList.add("ok");
       }
 
-      card.append(title, stats, metrics, risk);
+      const actions = document.createElement("div");
+      actions.className = "rack-card-actions";
+      const detailsBtn = document.createElement("button");
+      detailsBtn.type = "button";
+      detailsBtn.className = "details-btn";
+      detailsBtn.textContent = "View details";
+      detailsBtn.addEventListener("click", async (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        await openRackModal(rackRow.rack_id, rackRow.label, rackRow.latest);
+      });
+      actions.appendChild(detailsBtn);
+
+      card.append(title, stats, metrics, risk, actions);
       rackGrid.append(card);
     }
+  }
+
+  function rackHealthNarrative(latest) {
+    const messages = [];
+    const temp = latest && latest.rack_temperature ? Number(latest.rack_temperature.value) : null;
+    const airflow = latest && latest.airflow ? Number(latest.airflow.value) : null;
+    const humidity = latest && latest.humidity ? Number(latest.humidity.value) : null;
+    if (temp !== null && temp >= RACK_TEMP_CRIT_C) messages.push("Critical rack temperature");
+    else if (temp !== null && temp >= RACK_TEMP_WARN_C) messages.push("Temperature in warning band");
+    if (airflow !== null && airflow < 1.2) messages.push("Low airflow suggests cooling stress");
+    if (humidity !== null && humidity < 30) messages.push("Low humidity can increase static risk");
+    if (!messages.length) messages.push("Rack operating in normal band");
+    return messages.join(" · ");
+  }
+
+  function renderRackDetails(summary) {
+    if (!rackDetailsList) return;
+    const rows = summary.racks || [];
+    rackDetailsList.innerHTML = "";
+    for (const row of rows) {
+      const block = document.createElement("article");
+      block.className = "rack-detail-card";
+      const latest = row.latest || {};
+      const status = rackStatusFromLatest(latest);
+      const statusLabel = status === "critical" ? "Critical" : status === "warning" ? "Warning" : "Normal";
+      const statusClass = status === "critical" ? "chip-critical" : status === "warning" ? "chip-warning" : "chip-ok";
+      block.innerHTML =
+        `<header class="rack-detail-head"><h3>${row.label}</h3><span class="chip ${statusClass}">${statusLabel}</span></header>` +
+        "<div class='rack-detail-grid'>" +
+        `<div><span>Rack Temp</span><strong>${metricCell(latest, "rack_temperature")}</strong></div>` +
+        `<div><span>Room Temp</span><strong>${metricCell(latest, "room_temperature")}</strong></div>` +
+        `<div><span>Humidity</span><strong>${metricCell(latest, "humidity")}</strong></div>` +
+        `<div><span>Airflow</span><strong>${metricCell(latest, "airflow")}</strong></div>` +
+        `<div><span>Outdoor Temp</span><strong>${metricCell(latest, "outdoor_temperature")}</strong></div>` +
+        `<div><span>Risk Flags</span><strong>${riskCount(latest)}</strong></div>` +
+        "</div>" +
+        `<p class="rack-detail-note">${rackHealthNarrative(latest)}</p>`;
+      rackDetailsList.appendChild(block);
+    }
+    if (insightEl) {
+      const critical = rows.filter((r) => rackStatusFromLatest(r.latest || {}) === "critical").length;
+      const warning = rows.filter((r) => rackStatusFromLatest(r.latest || {}) === "warning").length;
+      insightEl.textContent =
+        `Overall snapshot: ${rows.length} rack(s) monitored. ${critical} critical, ${warning} warning, ${
+          rows.length - critical - warning
+        } normal. Click any rack card above for full modal diagnostics and sensor trends.`;
+    }
+    if (chartsTitle) chartsTitle.textContent = "Overall analysis and rack details";
+  }
+
+  function openModal() {
+    if (!rackModal) return;
+    rackModal.classList.remove("hidden");
+    document.body.classList.add("modal-open");
+  }
+
+  function closeModal() {
+    if (!rackModal) return;
+    rackModal.classList.add("hidden");
+    document.body.classList.remove("modal-open");
+  }
+
+  function sensorHealthRows(latestByType) {
+    const rows = [];
+    for (const st of SENSOR_ORDER) {
+      const item = latestByType && latestByType[st] ? latestByType[st] : null;
+      if (!item) {
+        rows.push(`<tr><td>${LABELS[st]}</td><td>—</td><td><span class="chip chip-muted">No data</span></td></tr>`);
+        continue;
+      }
+      const val = Number(item.value);
+      const cls = classifySensor(st, val);
+      const chip = cls === "critical" ? "chip-critical" : cls === "warning" ? "chip-warning" : "chip-ok";
+      rows.push(
+        `<tr><td>${LABELS[st]}</td><td>${val.toFixed(2)} ${item.unit || ""}</td><td><span class="chip ${chip}">${cls}</span></td></tr>`
+      );
+    }
+    return rows.join("");
+  }
+
+  async function openRackModal(rackId, rackLabel, latestByType) {
+    if (!rackModalBody || !rackModalTitle || !rackModalSub) return;
+    rackModalTitle.textContent = `${rackLabel} detailed diagnostics`;
+    rackModalSub.textContent = "Computing trends and derived health indicators...";
+    rackModalBody.innerHTML = "<p class='modal-loading'>Loading sensor history...</p>";
+    openModal();
+
+    const sensorResults = [];
+    for (const st of SENSOR_ORDER) {
+      try {
+        const data = await fetchJson(`/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=30`);
+        const values = (data.readings || []).map((r) => Number(r.value)).filter((v) => Number.isFinite(v));
+        if (!values.length) {
+          sensorResults.push({ st, trend: "no-data", volatility: "n/a", latest: null });
+          continue;
+        }
+        const latest = values[0];
+        const oldest = values[values.length - 1];
+        const drift = latest - oldest;
+        const trend = drift > 0.25 ? "rising" : drift < -0.25 ? "falling" : "stable";
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const variance = values.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / values.length;
+        const stdev = Math.sqrt(variance);
+        sensorResults.push({ st, trend, volatility: stdev.toFixed(2), latest });
+      } catch (_) {
+        sensorResults.push({ st, trend: "error", volatility: "n/a", latest: null });
+      }
+    }
+
+    const riskFlags = [];
+    for (const st of SENSOR_ORDER) {
+      const item = latestByType && latestByType[st] ? latestByType[st] : null;
+      if (!item) continue;
+      if (item.overheating) riskFlags.push("Overheating condition active");
+      if (item.cooling_failure) riskFlags.push("Cooling failure risk flagged");
+      if (item.static_risk) riskFlags.push("Static risk flagged (low humidity)");
+    }
+    const trendRows = sensorResults
+      .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td><td>${r.volatility}</td></tr>`)
+      .join("");
+    const riskHtml = riskFlags.length
+      ? `<ul class="modal-list">${riskFlags.map((x) => `<li>${x}</li>`).join("")}</ul>`
+      : "<p class='modal-ok'>No risk flags currently active for this rack.</p>";
+
+    rackModalSub.textContent = `Rack: ${rackId} · Updated ${new Date().toLocaleTimeString()}`;
+    rackModalBody.innerHTML =
+      `<section class="modal-section"><h4>Current Sensor Health</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Current Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(
+        latestByType
+      )}</tbody></table></section>` +
+      `<section class="modal-section"><h4>Trend and Stability (last 30 points)</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th><th>Volatility (std dev)</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
+      `<section class="modal-section"><h4>Operational Flags</h4>${riskHtml}</section>` +
+      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>Watch trend stability: high volatility can indicate unstable thermal load.</li></ul></section>";
   }
 
   function enqueueAlert(message, level) {
@@ -233,92 +503,12 @@
     renderAlerts();
   }
 
-  function drawLineChart(canvas, labels, values, sensorType) {
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    if (!values.length) {
-      ctx.fillStyle = "#8b9bb4";
-      ctx.font = "13px system-ui";
-      ctx.fillText("No points", 8, 24);
-      return;
-    }
-    const pad = 10;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    const isHot = sensorType === "rack_temperature";
-    ctx.strokeStyle = isHot ? "#e85d5d" : "#3d9cf5";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = pad + (i / Math.max(values.length - 1, 1)) * (w - pad * 2);
-      const y = pad + (1 - (v - min) / span) * (h - pad * 2);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = "#8b9bb4";
-    ctx.font = "11px system-ui";
-    ctx.fillText(labels[0] || "", pad, h - 2);
-    ctx.textAlign = "right";
-    ctx.fillText(labels[labels.length - 1] || "", w - pad, h - 2);
-    ctx.textAlign = "left";
-
-    // threshold guide line for quick interpretation.
-    if (sensorType === "rack_temperature") {
-      const yWarn = pad + (1 - (RACK_TEMP_WARN_C - min) / span) * (h - pad * 2);
-      const yCrit = pad + (1 - (RACK_TEMP_CRIT_C - min) / span) * (h - pad * 2);
-      if (yWarn >= pad && yWarn <= h - pad) {
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "rgba(245,166,35,0.8)";
-        ctx.beginPath();
-        ctx.moveTo(pad, yWarn);
-        ctx.lineTo(w - pad, yWarn);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      if (yCrit >= pad && yCrit <= h - pad) {
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "rgba(232,93,93,0.8)";
-        ctx.beginPath();
-        ctx.moveTo(pad, yCrit);
-        ctx.lineTo(w - pad, yCrit);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-  }
-
-  function ensureChart(sensorType) {
-    if (chartState[sensorType]) return chartState[sensorType];
-    const box = document.createElement("div");
-    box.className = "chart-box" + (sensorType === "rack_temperature" ? " chart-box--primary" : "");
-    const h4 = document.createElement("h4");
-    h4.textContent = LABELS[sensorType] || sensorType;
-    const canvas = document.createElement("canvas");
-    canvas.width = 420;
-    canvas.height = 170;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = "Loading...";
-    box.append(h4, canvas, meta);
-    chartsRoot.append(box);
-    chartState[sensorType] = { canvas, meta };
-    return chartState[sensorType];
-  }
-
-  function initCharts() {
-    chartState = {};
-    chartsRoot.innerHTML = "";
-    SENSOR_ORDER.forEach((st) => ensureChart(st));
-  }
-
   async function refreshSummary() {
     const data = await fetchJson("/api/racks-summary");
     updateOverheatDurations(data);
+    renderOverview(data);
     renderRackCards(data);
+    renderRackDetails(data);
     if (data.errors && data.errors.length) {
       setStatus("Data issue: " + data.errors[0], false);
     } else {
@@ -326,61 +516,24 @@
     }
   }
 
-  async function refreshCharts() {
-    chartsTitle.textContent = `Details of ${rackName(selectedRackId)}`;
-    const insightBits = [];
-    for (const st of SENSOR_ORDER) {
-      try {
-        const data = await fetchJson(`/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(selectedRackId)}&n=20`);
-        const readings = (data.readings || []).slice().reverse();
-        const labels = readings.map((r) => (r.timestamp || "").slice(11, 19));
-        const values = readings.map((r) => parseFloat(r.value));
-        const { canvas, meta } = ensureChart(st);
-        drawLineChart(canvas, labels, values, st);
-        if (values.length > 1) {
-          const latest = values[values.length - 1];
-          const prev = values[values.length - 2];
-          const delta = latest - prev;
-          const trend = delta > 0 ? "rising" : delta < 0 ? "falling" : "stable";
-          meta.textContent = `latest: ${latest.toFixed(2)} · trend: ${trend} (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} from previous sample)`;
-          if (st === "rack_temperature" && latest >= RACK_TEMP_CRIT_C) {
-            insightBits.push(`Rack temperature is CRITICAL at ${latest.toFixed(2)}°C (>= ${RACK_TEMP_CRIT_C}°C).`);
-          } else if (st === "rack_temperature" && latest >= RACK_TEMP_WARN_C) {
-            insightBits.push(`Rack temperature is in WARNING at ${latest.toFixed(2)}°C (>= ${RACK_TEMP_WARN_C}°C).`);
-          }
-          if (st === "airflow" && latest < 1.2) {
-            insightBits.push(`Airflow dropped to ${latest.toFixed(2)} m/s, indicating possible cooling failure.`);
-          }
-        } else {
-          meta.textContent = "insufficient points for trend";
-        }
-      } catch (e) {
-        const { canvas, meta } = ensureChart(st);
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#f5a623";
-        ctx.font = "11px system-ui";
-        ctx.fillText("Chart error", 8, 18);
-        meta.textContent = "unable to load this sensor";
-      }
-    }
-    if (insightEl) {
-      insightEl.textContent = insightBits.length
-        ? insightBits.join(" ")
-        : "System interpretation: this rack is currently in a normal operating band. Use trend lines below to identify early drift.";
-    }
-  }
-
   async function refreshAll() {
     try {
       await refreshSummary();
-      await refreshCharts();
     } catch (e) {
       setStatus("Refresh error: " + e.message, false);
     }
   }
 
-  initCharts();
+  if (rackModalClose) rackModalClose.addEventListener("click", closeModal);
+  if (rackModal) {
+    rackModal.addEventListener("click", (evt) => {
+      const target = evt.target;
+      if (target && target.dataset && target.dataset.closeModal === "1") closeModal();
+    });
+  }
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeModal();
+  });
   refreshAll();
   setInterval(refreshAll, POLL_MS);
 })();
