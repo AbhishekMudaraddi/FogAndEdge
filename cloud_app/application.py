@@ -1,14 +1,11 @@
 """
 Cloud layer: Flask API + HTML dashboard; reads DynamoDB via Query (no table scans).
-Set MOCK_DYNAMODB=1 to run the UI locally without AWS (synthetic readings).
 """
 from __future__ import annotations
 
 import logging
 import os
-import random
 import statistics
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -28,8 +25,6 @@ if not RACK_IDS:
     RACK_IDS = [DEFAULT_RACK_ID]
 if DEFAULT_RACK_ID not in RACK_IDS:
     RACK_IDS.insert(0, DEFAULT_RACK_ID)
-
-MOCK_DYNAMODB = os.environ.get("MOCK_DYNAMODB", "").lower() in ("1", "true", "yes")
 
 _ddb = boto3.resource("dynamodb", region_name=AWS_REGION)
 
@@ -58,71 +53,9 @@ def normalize_rack_id(raw: str | None) -> str:
 
 
 def get_table():
-    if MOCK_DYNAMODB:
-        raise RuntimeError("DynamoDB disabled in MOCK_DYNAMODB mode")
     if not TABLE_NAME:
         raise RuntimeError("DYNAMODB_TABLE_NAME is not set")
     return _ddb.Table(TABLE_NAME)
-
-
-def _mock_random_value(sensor_type: str) -> float:
-    if sensor_type == "rack_temperature":
-        return round(random.uniform(28.0, 42.0), 2)
-    if sensor_type == "room_temperature":
-        return round(random.uniform(18.0, 28.0), 2)
-    if sensor_type == "humidity":
-        return round(random.uniform(30.0, 60.0), 2)
-    if sensor_type == "airflow":
-        return round(random.uniform(0.5, 3.5), 2)
-    if sensor_type == "outdoor_temperature":
-        return round(random.uniform(-5.0, 35.0), 2)
-    return 0.0
-
-
-def _mock_derived(batch: dict[str, float]) -> dict[str, Any]:
-    rack = batch.get("rack_temperature")
-    room = batch.get("room_temperature")
-    outdoor = batch.get("outdoor_temperature")
-    airflow = batch.get("airflow")
-    humidity = batch.get("humidity")
-    cooling_efficiency = None
-    if rack is not None and room is not None and outdoor is not None and rack != 0:
-        cooling_efficiency = (room - outdoor) / rack
-    return {
-        "cooling_efficiency": cooling_efficiency,
-        "overheating": bool(rack is not None and rack > 40.0),
-        "cooling_failure": bool(airflow is not None and airflow < 1.2),
-        "static_risk": bool(humidity is not None and humidity < 20.0),
-    }
-
-
-def mock_query_sensor(rack: str, sensor_type: str, limit: int) -> list[dict[str, Any]]:
-    now = datetime.now(timezone.utc)
-    epoch_now = int(now.timestamp())
-    items: list[dict[str, Any]] = []
-    for i in range(limit):
-        ts_dt = now - timedelta(seconds=i * 30)
-        ts = ts_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        batch_vals = {st: _mock_random_value(st) for st in VALID_SENSORS}
-        derived = _mock_derived(batch_vals)
-        item: dict[str, Any] = {
-            "rack_id": rack,
-            "sensor_timestamp": f"{sensor_type}#{ts}",
-            "sensor_type": sensor_type,
-            "value": batch_vals[sensor_type],
-            "unit": _UNITS[sensor_type],
-            "timestamp": ts,
-            "expiry_timestamp": epoch_now + 7 * 24 * 60 * 60,
-            "overheating": derived["overheating"],
-            "cooling_failure": derived["cooling_failure"],
-            "static_risk": derived["static_risk"],
-            "datacenter_id": os.environ.get("DATACENTER_ID", "DC-01"),
-        }
-        ce = derived.get("cooling_efficiency")
-        if ce is not None:
-            item["cooling_efficiency"] = round(float(ce), 6)
-        items.append(item)
-    return items
 
 
 def decimal_to_native(obj: Any) -> Any:
@@ -138,8 +71,6 @@ def decimal_to_native(obj: Any) -> Any:
 
 
 def query_sensor(rack: str, sensor_type: str, limit: int) -> list[dict[str, Any]]:
-    if MOCK_DYNAMODB:
-        return mock_query_sensor(rack, sensor_type, limit)
     table = get_table()
     prefix = f"{sensor_type}#"
     kwargs: dict[str, Any] = {
@@ -269,7 +200,6 @@ def health():
         "layer": "cloud",
         "rack_id": DEFAULT_RACK_ID,
         "rack_ids": RACK_IDS,
-        "mock_dynamodb": MOCK_DYNAMODB,
         "aws_region": AWS_REGION,
         "dynamodb_table_configured": bool(TABLE_NAME),
     })
@@ -282,13 +212,9 @@ def api_diagnostics():
         "rack_id": rid,
         "rack_ids": RACK_IDS,
         "aws_region": AWS_REGION,
-        "mock_dynamodb": MOCK_DYNAMODB,
         "dynamodb_table_configured": bool(TABLE_NAME),
         "table_name": TABLE_NAME if TABLE_NAME else None,
     }
-    if MOCK_DYNAMODB:
-        out["note"] = "MOCK_DYNAMODB is on."
-        return jsonify(out)
     if not TABLE_NAME:
         out["query_error"] = "DYNAMODB_TABLE_NAME is empty."
         return jsonify(out)
