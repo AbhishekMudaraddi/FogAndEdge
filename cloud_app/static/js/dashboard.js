@@ -10,6 +10,7 @@
   }
   const cfg = readAppConfig();
   const POLL_MS = cfg.pollIntervalMs || 30000;
+  const REFRESH_SEC = Math.max(1, Math.round(POLL_MS / 1000));
   const SENSOR_ORDER = [
     "rack_temperature",
     "room_temperature",
@@ -57,6 +58,12 @@
   const rackAlertMeta = {}; // rack_id -> last alert metadata
   let activeAlerts = [];
   let refreshTick = 0;
+  let secUntilRefresh = REFRESH_SEC;
+
+  function updateCountdownDisplay() {
+    const el = document.getElementById("refresh-countdown");
+    if (el) el.textContent = String(Math.max(0, secUntilRefresh));
+  }
 
   function setStatus(text, ok) {
     if (!statusEl) return;
@@ -588,7 +595,7 @@
         const labels = readings.map((r) => (r.timestamp || "").slice(11, 19));
         const values = readings.map((r) => parseFloat(r.value)).filter((v) => Number.isFinite(v));
         if (!values.length) {
-          sensorResults.push({ st, trend: "no-data", volatility: "n/a", latest: null });
+          sensorResults.push({ st, trend: "no-data", latest: null });
           seriesBySensor[st] = { labels: [], values: [], metaText: "No data" };
           continue;
         }
@@ -596,19 +603,11 @@
         const oldest = values[0];
         const drift = latest - oldest;
         const trend = drift > 0.25 ? "rising" : drift < -0.25 ? "falling" : "stable";
-        const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const variance = values.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / values.length;
-        const stdev = Math.sqrt(variance);
-        let metaText = `Latest ${latest.toFixed(2)} · ${trend} · σ ${stdev.toFixed(2)}`;
-        if (values.length > 1) {
-          const prev = values[values.length - 2];
-          const delta = latest - prev;
-          metaText += ` · Δ ${delta >= 0 ? "+" : ""}${delta.toFixed(2)} vs prior`;
-        }
-        sensorResults.push({ st, trend, volatility: stdev.toFixed(2), latest });
+        const metaText = `Latest: ${latest.toFixed(2)}`;
+        sensorResults.push({ st, trend, latest });
         seriesBySensor[st] = { labels, values, metaText };
       } catch (_) {
-        sensorResults.push({ st, trend: "error", volatility: "n/a", latest: null });
+        sensorResults.push({ st, trend: "error", latest: null });
         seriesBySensor[st] = { labels: [], values: [], metaText: "Load failed" };
       }
     }
@@ -627,23 +626,9 @@
       if (flagRow.static_risk) riskFlags.push("Static risk flagged (low humidity)");
     }
 
-    const ce = fogCoolingEfficiency(latestByType || {});
-    const ceDisplay = ce === null ? "— (needs rack, room, outdoor in same batch)" : ce.toFixed(6);
-    const fogTable =
-      `<table class="modal-table modal-table--compact"><tbody>` +
-      `<tr><th scope="row">Cooling efficiency η</th><td>${ceDisplay} <span class="modal-hint-inline">(room−outdoor)/rack</span></td></tr>` +
-      `<tr><th scope="row">Overheating</th><td>${flagRow && flagRow.overheating ? "Yes" : "No"}</td></tr>` +
-      `<tr><th scope="row">Cooling failure</th><td>${flagRow && flagRow.cooling_failure ? "Yes" : "No"}</td></tr>` +
-      `<tr><th scope="row">Static risk</th><td>${flagRow && flagRow.static_risk ? "Yes" : "No"}</td></tr>` +
-      `<tr><th scope="row">Active flag count</th><td>${riskCount(latestByType || {})}</td></tr>` +
-      `</tbody></table>`;
-
     const trendRows = sensorResults
-      .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td><td>${r.volatility}</td></tr>`)
+      .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td></tr>`)
       .join("");
-    const riskHtml = riskFlags.length
-      ? `<div class="modal-risk-list">${riskFlags.map((x) => `<div class="modal-risk-item">${x}</div>`).join("")}</div>`
-      : "<p class='modal-ok'>No operational flags from fog layer for this rack.</p>";
 
     const chartBoxes = SENSOR_ORDER.map((st) => {
       const primary = st === "rack_temperature" ? " modal-chart-box--primary" : "";
@@ -656,7 +641,7 @@
       );
     }).join("");
 
-    rackModalSub.textContent = `Rack: ${rackId} · Charts: last ${MODAL_POINTS} points · ${new Date().toLocaleTimeString()}`;
+    rackModalSub.textContent = rackId;
     rackModalBody.innerHTML =
       `<section class="modal-section modal-section--visual">` +
       `<h4>Status and warnings</h4>` +
@@ -664,17 +649,13 @@
       `<div class="modal-pie-wrap"><h5>Sensor state (now)</h5><canvas id="modal-health-pie" width="200" height="200"></canvas><p class="modal-pie-legend">By per-sensor thresholds (not rack card rule).</p></div>` +
       `<div class="modal-banners">${buildModalBanners(latestByType, sensorResults, riskFlags)}</div>` +
       `</div></section>` +
-      `<section class="modal-section"><h4>Fog layer output (Lambda → DynamoDB)</h4>` +
-      `<p class="modal-section-hint">These fields are computed when SQS messages are processed, then stored on each reading. The cloud app only reads and visualizes them (no duplicate fog logic).</p>${fogTable}` +
-      `<p class="modal-section-hint">Tip: structured JSON logs per rack batch appear in CloudWatch (filter <code>enrichment_batch</code>).</p></section>` +
       `<section class="modal-section"><h4>Trend charts (oldest → newest)</h4><p class="modal-section-hint">Dashed lines on rack temperature: warning ${RACK_TEMP_WARN_C}°C and critical ${RACK_TEMP_CRIT_C}°C.</p>` +
       `<div class="modal-charts-grid">${chartBoxes}</div></section>` +
       `<section class="modal-section"><h4>Current readings</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(
         latestByType
       )}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Trend summary</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th><th>Volatility</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Operational flags</h4>${riskHtml}</section>` +
-      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>Use volatility: sustained high σ on rack temperature can mean unstable load or sensor placement issues.</li></ul></section>";
+      `<section class="modal-section"><h4>Trend summary</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
+      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>If rack temperature keeps climbing on the chart, check cooling and workload.</li></ul></section>";
 
     const pieCanvas = rackModalBody.querySelector("#modal-health-pie");
     drawModalSensorHealthPie(pieCanvas, latestByType || {});
@@ -792,6 +773,17 @@
   document.addEventListener("keydown", (evt) => {
     if (evt.key === "Escape") closeModal();
   });
+
   refreshAll();
-  setInterval(refreshAll, POLL_MS);
+  secUntilRefresh = REFRESH_SEC;
+  updateCountdownDisplay();
+
+  setInterval(() => {
+    secUntilRefresh -= 1;
+    if (secUntilRefresh <= 0) {
+      secUntilRefresh = REFRESH_SEC;
+      refreshAll();
+    }
+    updateCountdownDisplay();
+  }, 1000);
 })();
