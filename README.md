@@ -66,6 +66,34 @@ If `SQS_QUEUE_URL` is **unset**, the worker still runs but **skips** sending (lo
 - **Sort key:** `sensor_timestamp` (String), format `sensor_type#ISO8601` (unique per reading, queryable with `begins_with`)
 - **TTL:** enable on attribute `expiry_timestamp` (Number, Unix epoch seconds)
 
+## Fog vs cloud responsibilities
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Edge** | Simulates 5 sensor types × N racks; batches JSON; publishes to **SQS** (`SENSOR_FREQUENCY`, `DISPATCH_RATE`). |
+| **Fog (Lambda)** | Parses each SQS message; groups by `rack_id`; computes **derived fields** (`cooling_efficiency`, `overheating`, `cooling_failure`, `static_risk`); sets **TTL**; writes enriched items to **DynamoDB** via `batch_writer`. |
+| **Cloud** | **Reads** DynamoDB only; REST API + dashboard; **aggregates** (means, charts, trends) in the UI — it **does not** recompute fog formulas; it displays values stored by Lambda. |
+
+The dashboard includes a collapsible **“Edge, fog, and cloud”** note and shows **Fog: cooling η** plus a **Fog layer output** table in the rack modal so markers can see enrichment without opening AWS consoles.
+
+## Fog visibility in CloudWatch (structured logs)
+
+After each deploy, open **Lambda → Monitor → View CloudWatch logs**. Each invocation logs JSON lines you can filter or query:
+
+- **`event: enrichment_batch`** — one object per **rack** inside an SQS message: `rack_id`, `readings_written`, `flags` (booleans), `flag_count`, `cooling_efficiency`, `message_id`.
+- **`event: sqs_invoke_complete`** — how many SQS records were handled in that Lambda invocation.
+
+**Example CloudWatch Logs Insights** (adjust log group name):
+
+```sql
+fields @timestamp, @message
+| filter @message like /enrichment_batch/
+| sort @timestamp desc
+| limit 50
+```
+
+Paste `@message` into a JSON formatter or use `parse @message '"rack_id":"*"' as rack_id` if you add a parser. For coursework, a screenshot of log lines showing `flag_count` and `rack_id` is enough to evidence fog processing.
+
 ## Environment variables
 
 **Edge (`edge_app`):**

@@ -47,6 +47,37 @@ body {
   margin-bottom: 1rem;
 }
 
+details.data-flow {
+  cursor: pointer;
+}
+
+details.data-flow summary {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+details.data-flow .data-flow-body {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed #314157;
+}
+
+details.data-flow .data-flow-body p {
+  margin: 0 0 0.65rem;
+  font-size: 0.86rem;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+details.data-flow .data-flow-body code {
+  font-size: 0.78rem;
+  background: #101723;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid #2a3545;
+}
+
 .panel h2 { margin: 0 0 0.3rem; font-size: 1.02rem; }
 .hint { margin: 0 0 0.9rem; color: var(--muted); font-size: 0.85rem; }
 
@@ -309,6 +340,10 @@ body {
   font-size: 0.8rem;
 }
 
+.rack-detail-fog {
+  grid-column: 1 / -1;
+}
+
 .modal.hidden {
   display: none;
 }
@@ -389,6 +424,17 @@ body {
   border-bottom: 1px solid #2a3545;
   padding: 0.42rem 0.3rem;
   text-align: left;
+}
+
+.modal-table th[scope="row"] {
+  color: var(--muted);
+  font-weight: 600;
+  width: 42%;
+}
+
+.modal-hint-inline {
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .chip {

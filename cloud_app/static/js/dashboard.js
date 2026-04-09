@@ -90,6 +90,26 @@
     return `${Number(item.value).toFixed(2)} ${item.unit || ""}`;
   }
 
+  /** Fog (Lambda) copies the same enrichment onto every sensor row for that batch. */
+  function firstLatestRow(latest) {
+    for (const st of SENSOR_ORDER) {
+      if (latest && latest[st]) return latest[st];
+    }
+    return null;
+  }
+
+  function fogCoolingEfficiency(latest) {
+    const row = firstLatestRow(latest);
+    if (!row || row.cooling_efficiency == null || row.cooling_efficiency === "") return null;
+    const n = Number(row.cooling_efficiency);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function formatFogCoolingEfficiency(latest) {
+    const n = fogCoolingEfficiency(latest);
+    return n === null ? "—" : n.toFixed(4);
+  }
+
   /**
    * Lambda copies the same overheating/cooling_failure/static_risk onto every sensor row
    * for a rack batch, so counting per-sensor would always show 5. Count distinct flags once.
@@ -347,6 +367,9 @@
         `<div><span>Airflow</span><strong>${metricCell(latest, "airflow")}</strong></div>` +
         `<div><span>Outdoor Temp</span><strong>${metricCell(latest, "outdoor_temperature")}</strong></div>` +
         `<div><span>Risk Flags</span><strong>${riskCount(latest)}</strong></div>` +
+        `<div class="rack-detail-fog"><span>Fog: cooling η</span><strong title="(room−outdoor)/rack, computed in Lambda">${formatFogCoolingEfficiency(
+          latest
+        )}</strong></div>` +
         "</div>" +
         `<p class="rack-detail-note">${rackHealthNarrative(latest)}</p>`;
       rackDetailsList.appendChild(block);
@@ -357,7 +380,7 @@
       insightEl.textContent =
         `Overall snapshot (rack inlet temperature): ${rows.length} rack(s) monitored. ${critical} critical, ${warning} warning, ${
           rows.length - critical - warning
-        } normal. Click any rack card above for full modal diagnostics and per-sensor trends.`;
+        } normal. Fog (Lambda) enriches batches with cooling η and risk flags before DynamoDB; this page queries DynamoDB and aggregates trends — it does not recompute fog logic.`;
     }
     if (chartsTitle) chartsTitle.textContent = "Overall analysis and rack details";
   }
@@ -604,6 +627,17 @@
       if (flagRow.static_risk) riskFlags.push("Static risk flagged (low humidity)");
     }
 
+    const ce = fogCoolingEfficiency(latestByType || {});
+    const ceDisplay = ce === null ? "— (needs rack, room, outdoor in same batch)" : ce.toFixed(6);
+    const fogTable =
+      `<table class="modal-table modal-table--compact"><tbody>` +
+      `<tr><th scope="row">Cooling efficiency η</th><td>${ceDisplay} <span class="modal-hint-inline">(room−outdoor)/rack</span></td></tr>` +
+      `<tr><th scope="row">Overheating</th><td>${flagRow && flagRow.overheating ? "Yes" : "No"}</td></tr>` +
+      `<tr><th scope="row">Cooling failure</th><td>${flagRow && flagRow.cooling_failure ? "Yes" : "No"}</td></tr>` +
+      `<tr><th scope="row">Static risk</th><td>${flagRow && flagRow.static_risk ? "Yes" : "No"}</td></tr>` +
+      `<tr><th scope="row">Active flag count</th><td>${riskCount(latestByType || {})}</td></tr>` +
+      `</tbody></table>`;
+
     const trendRows = sensorResults
       .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td><td>${r.volatility}</td></tr>`)
       .join("");
@@ -630,6 +664,9 @@
       `<div class="modal-pie-wrap"><h5>Sensor state (now)</h5><canvas id="modal-health-pie" width="200" height="200"></canvas><p class="modal-pie-legend">By per-sensor thresholds (not rack card rule).</p></div>` +
       `<div class="modal-banners">${buildModalBanners(latestByType, sensorResults, riskFlags)}</div>` +
       `</div></section>` +
+      `<section class="modal-section"><h4>Fog layer output (Lambda → DynamoDB)</h4>` +
+      `<p class="modal-section-hint">These fields are computed when SQS messages are processed, then stored on each reading. The cloud app only reads and visualizes them (no duplicate fog logic).</p>${fogTable}` +
+      `<p class="modal-section-hint">Tip: structured JSON logs per rack batch appear in CloudWatch (filter <code>enrichment_batch</code>).</p></section>` +
       `<section class="modal-section"><h4>Trend charts (oldest → newest)</h4><p class="modal-section-hint">Dashed lines on rack temperature: warning ${RACK_TEMP_WARN_C}°C and critical ${RACK_TEMP_CRIT_C}°C.</p>` +
       `<div class="modal-charts-grid">${chartBoxes}</div></section>` +
       `<section class="modal-section"><h4>Current readings</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(

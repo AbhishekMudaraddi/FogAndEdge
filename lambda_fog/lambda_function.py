@@ -55,6 +55,45 @@ def index_by_type(readings: list[dict[str, Any]]) -> dict[str, float]:
     return out
 
 
+def log_fog_enrichment(
+    *,
+    message_id: str | None,
+    rack_id: str,
+    readings_count: int,
+    derived: dict[str, Any],
+) -> None:
+    """One JSON line per rack batch — easy to filter in CloudWatch Logs Insights."""
+    oh = bool(derived.get("overheating"))
+    cf = bool(derived.get("cooling_failure"))
+    sr = bool(derived.get("static_risk"))
+    flag_count = int(oh) + int(cf) + int(sr)
+    ce = derived.get("cooling_efficiency")
+    ce_out: float | None
+    if ce is None:
+        ce_out = None
+    else:
+        try:
+            ce_out = round(float(ce), 6)
+        except (TypeError, ValueError):
+            ce_out = None
+    payload = {
+        "layer": "fog",
+        "component": "lambda_fog",
+        "event": "enrichment_batch",
+        "message_id": message_id,
+        "rack_id": rack_id,
+        "readings_written": readings_count,
+        "flags": {
+            "overheating": oh,
+            "cooling_failure": cf,
+            "static_risk": sr,
+        },
+        "flag_count": flag_count,
+        "cooling_efficiency": ce_out,
+    }
+    logger.info("%s", json.dumps(payload))
+
+
 def compute_batch_derived(by_type: dict[str, float]) -> dict[str, Any]:
     rack = by_type.get("rack_temperature")
     room = by_type.get("room_temperature")
@@ -130,9 +169,15 @@ def process_records(records: list[dict[str, Any]], now_epoch: int) -> None:
                 rack = str(reading.get("rack_id") or reading.get("datacenter_id") or "unknown")
                 grouped.setdefault(rack, []).append(reading)
 
-            for _rack, rack_readings in grouped.items():
+            for rack_id, rack_readings in grouped.items():
                 by_type = index_by_type(rack_readings)
                 derived = compute_batch_derived(by_type)
+                log_fog_enrichment(
+                    message_id=rec.get("messageId"),
+                    rack_id=rack_id,
+                    readings_count=len(rack_readings),
+                    derived=derived,
+                )
                 for reading in rack_readings:
                     try:
                         item = enrich_item(reading, derived, expiry_ts)
@@ -150,4 +195,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return {"statusCode": 200, "body": json.dumps({"ok": True, "processed": 0})}
 
     process_records(records, now_epoch)
+    logger.info(
+        "%s",
+        json.dumps(
+            {
+                "layer": "fog",
+                "component": "lambda_fog",
+                "event": "sqs_invoke_complete",
+                "messages_processed": len(records),
+            }
+        ),
+    )
     return {"statusCode": 200, "body": json.dumps({"ok": True, "processed": len(records)})}

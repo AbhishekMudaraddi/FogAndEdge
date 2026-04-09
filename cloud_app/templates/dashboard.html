@@ -14,6 +14,25 @@
     </header>
 
     <main class="layout">
+      <details class="data-flow panel">
+        <summary>Edge, fog, and cloud — who does what?</summary>
+        <div class="data-flow-body">
+          <p>
+            <strong>Edge</strong> simulates 5 sensor types per rack and publishes batches to <strong>SQS</strong> on a configurable interval
+            (<code>SENSOR_FREQUENCY</code>, <code>DISPATCH_RATE</code>).
+          </p>
+          <p>
+            <strong>Fog (Lambda)</strong> consumes each message, derives <strong>cooling efficiency</strong> and boolean <strong>risk flags</strong>
+            from the batch, attaches TTL, and writes enriched items to <strong>DynamoDB</strong>. Check CloudWatch logs for structured JSON lines
+            (<code>event: enrichment_batch</code>) with <code>rack_id</code>, <code>flag_count</code>, and <code>cooling_efficiency</code>.
+          </p>
+          <p>
+            <strong>Cloud (this app)</strong> queries DynamoDB, serves the dashboard, computes <strong>aggregates and charts</strong> in the browser —
+            it does not re-run Lambda logic; it displays fog outputs stored on each reading.
+          </p>
+        </div>
+      </details>
+
       <section class="panel">
         <h2>Rack overview</h2>
         <p class="hint">Click a rack card to focus graphs below. Use "View details" for full rack diagnostics.</p>
