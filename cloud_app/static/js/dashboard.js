@@ -1,5 +1,14 @@
 (function () {
-  const cfg = window.APP_CONFIG || {};
+  function readAppConfig() {
+    const el = document.getElementById("app-config");
+    if (!el || !el.textContent) return {};
+    try {
+      return JSON.parse(el.textContent.trim());
+    } catch (_) {
+      return {};
+    }
+  }
+  const cfg = readAppConfig();
   const POLL_MS = cfg.pollIntervalMs || 30000;
   const SENSOR_ORDER = [
     "rack_temperature",
@@ -81,15 +90,24 @@
     return `${Number(item.value).toFixed(2)} ${item.unit || ""}`;
   }
 
+  /**
+   * Lambda copies the same overheating/cooling_failure/static_risk onto every sensor row
+   * for a rack batch, so counting per-sensor would always show 5. Count distinct flags once.
+   */
   function riskCount(row) {
-    const keys = Object.keys(row || {});
-    let count = 0;
-    for (const k of keys) {
-      const item = row[k];
-      if (!item) continue;
-      if (item.overheating || item.cooling_failure || item.static_risk) count += 1;
+    let item = null;
+    for (const k of SENSOR_ORDER) {
+      if (row && row[k]) {
+        item = row[k];
+        break;
+      }
     }
-    return count;
+    if (!item) return 0;
+    let n = 0;
+    if (item.overheating) n += 1;
+    if (item.cooling_failure) n += 1;
+    if (item.static_risk) n += 1;
+    return n;
   }
 
   function extractLastTimestamp(latest) {
@@ -130,16 +148,12 @@
     return "normal";
   }
 
-  function rackStatusFromLatest(latest) {
-    let status = "normal";
-    for (const st of SENSOR_ORDER) {
-      const item = latest && latest[st] ? latest[st] : null;
-      if (!item) continue;
-      const cls = classifySensor(st, Number(item.value));
-      if (cls === "critical") return "critical";
-      if (cls === "warning") status = "warning";
-    }
-    return status;
+  /** Matches rack card border and "Status: …" line (rack inlet temperature only). */
+  function rackOperationalStatus(latest) {
+    const tempRow = latest && latest.rack_temperature ? latest.rack_temperature : null;
+    const tempVal = tempRow ? Number(tempRow.value) : null;
+    if (tempVal === null || Number.isNaN(tempVal)) return "normal";
+    return tempLevel(tempVal);
   }
 
   function drawOverviewPie(counts) {
@@ -210,7 +224,7 @@
         }
       }
       if (riskCount(row.latest) > 0) riskRacks += 1;
-      const status = rackStatusFromLatest(row.latest);
+      const status = rackOperationalStatus(row.latest);
       statusCounts[status] += 1;
     }
     if (overviewKpis) {
@@ -321,7 +335,7 @@
       const block = document.createElement("article");
       block.className = "rack-detail-card";
       const latest = row.latest || {};
-      const status = rackStatusFromLatest(latest);
+      const status = rackOperationalStatus(latest);
       const statusLabel = status === "critical" ? "Critical" : status === "warning" ? "Warning" : "Normal";
       const statusClass = status === "critical" ? "chip-critical" : status === "warning" ? "chip-warning" : "chip-ok";
       block.innerHTML =
@@ -338,12 +352,12 @@
       rackDetailsList.appendChild(block);
     }
     if (insightEl) {
-      const critical = rows.filter((r) => rackStatusFromLatest(r.latest || {}) === "critical").length;
-      const warning = rows.filter((r) => rackStatusFromLatest(r.latest || {}) === "warning").length;
+      const critical = rows.filter((r) => rackOperationalStatus(r.latest || {}) === "critical").length;
+      const warning = rows.filter((r) => rackOperationalStatus(r.latest || {}) === "warning").length;
       insightEl.textContent =
-        `Overall snapshot: ${rows.length} rack(s) monitored. ${critical} critical, ${warning} warning, ${
+        `Overall snapshot (rack inlet temperature): ${rows.length} rack(s) monitored. ${critical} critical, ${warning} warning, ${
           rows.length - critical - warning
-        } normal. Click any rack card above for full modal diagnostics and sensor trends.`;
+        } normal. Click any rack card above for full modal diagnostics and per-sensor trends.`;
     }
     if (chartsTitle) chartsTitle.textContent = "Overall analysis and rack details";
   }
@@ -378,58 +392,265 @@
     return rows.join("");
   }
 
+  function drawLineChart(canvas, labels, values, sensorType) {
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!values.length) {
+      ctx.fillStyle = "#8b9bb4";
+      ctx.font = "13px system-ui";
+      ctx.fillText("No points", 8, 24);
+      return;
+    }
+    const pad = 12;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    const isHot = sensorType === "rack_temperature";
+    ctx.strokeStyle = isHot ? "#e85d5d" : "#3d9cf5";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      const x = pad + (i / Math.max(values.length - 1, 1)) * (w - pad * 2);
+      const y = pad + (1 - (v - min) / span) * (h - pad * 2);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = "#8b9bb4";
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "left";
+    ctx.fillText(labels[0] || "", pad, h - 4);
+    ctx.textAlign = "right";
+    ctx.fillText(labels[labels.length - 1] || "", w - pad, h - 4);
+    ctx.textAlign = "left";
+
+    if (sensorType === "rack_temperature") {
+      const yWarn = pad + (1 - (RACK_TEMP_WARN_C - min) / span) * (h - pad * 2);
+      const yCrit = pad + (1 - (RACK_TEMP_CRIT_C - min) / span) * (h - pad * 2);
+      if (yWarn >= pad && yWarn <= h - pad) {
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = "rgba(245,166,35,0.85)";
+        ctx.beginPath();
+        ctx.moveTo(pad, yWarn);
+        ctx.lineTo(w - pad, yWarn);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (yCrit >= pad && yCrit <= h - pad) {
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = "rgba(232,93,93,0.85)";
+        ctx.beginPath();
+        ctx.moveTo(pad, yCrit);
+        ctx.lineTo(w - pad, yCrit);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  function drawModalSensorHealthPie(canvas, latestByType) {
+    if (!canvas || !latestByType) return;
+    let normal = 0;
+    let warning = 0;
+    let critical = 0;
+    for (const st of SENSOR_ORDER) {
+      const item = latestByType[st];
+      if (!item) continue;
+      const c = classifySensor(st, Number(item.value));
+      if (c === "critical") critical += 1;
+      else if (c === "warning") warning += 1;
+      else normal += 1;
+    }
+    const total = normal + warning + critical;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const r = Math.min(w, h) / 2 - 8;
+    ctx.clearRect(0, 0, w, h);
+    if (!total) {
+      ctx.fillStyle = "#8b9bb4";
+      ctx.font = "12px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("No data", cx, cy);
+      ctx.textAlign = "left";
+      return;
+    }
+    const slices = [
+      { color: "#3ddc97", v: normal },
+      { color: "#f5a623", v: warning },
+      { color: "#e85d5d", v: critical },
+    ];
+    let start = -Math.PI / 2;
+    for (const s of slices) {
+      const angle = (s.v / total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, start + angle);
+      ctx.closePath();
+      ctx.fillStyle = s.color;
+      ctx.fill();
+      start += angle;
+    }
+    ctx.beginPath();
+    ctx.fillStyle = "#121a26";
+    ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e7ecf3";
+    ctx.font = "bold 14px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(String(total), cx, cy + 5);
+    ctx.textAlign = "left";
+  }
+
+  function buildModalBanners(latestByType, sensorResults, riskFlagMessages) {
+    const parts = [];
+    const tempRow = latestByType && latestByType.rack_temperature ? latestByType.rack_temperature : null;
+    const tempVal = tempRow ? Number(tempRow.value) : null;
+    const rackLevel = tempVal === null || Number.isNaN(tempVal) ? "normal" : tempLevel(tempVal);
+    if (rackLevel === "critical") {
+      parts.push(
+        `<div class="modal-banner modal-banner--critical"><strong>Rack temperature critical</strong><span>${tempVal.toFixed(2)}°C — immediate cooling review recommended.</span></div>`
+      );
+    } else if (rackLevel === "warning") {
+      parts.push(
+        `<div class="modal-banner modal-banner--warning"><strong>Rack temperature elevated</strong><span>${tempVal.toFixed(2)}°C — monitor trend and airflow.</span></div>`
+      );
+    } else if (tempVal !== null) {
+      parts.push(
+        `<div class="modal-banner modal-banner--ok"><strong>Rack temperature normal</strong><span>${tempVal.toFixed(2)}°C within expected band.</span></div>`
+      );
+    }
+    for (const msg of riskFlagMessages) {
+      parts.push(`<div class="modal-banner modal-banner--risk"><strong>Operational flag</strong><span>${msg}</span></div>`);
+    }
+    const trendWarnings = [];
+    for (const r of sensorResults) {
+      if (r.trend === "rising" && r.st === "rack_temperature" && r.latest !== null && r.latest >= RACK_TEMP_WARN_C) {
+        trendWarnings.push("Rack temperature is rising while already warm — check load and cooling.");
+      }
+      if (r.trend === "falling" && r.st === "airflow" && r.latest !== null && r.latest < 1.5) {
+        trendWarnings.push("Airflow is falling — possible obstruction or fan issue.");
+      }
+    }
+    for (const tw of trendWarnings) {
+      parts.push(`<div class="modal-banner modal-banner--warning"><strong>Trend insight</strong><span>${tw}</span></div>`);
+    }
+    if (!parts.length) {
+      parts.push(`<div class="modal-banner modal-banner--ok"><strong>All clear</strong><span>No urgent warnings from current readings and trends.</span></div>`);
+    }
+    return parts.join("");
+  }
+
   async function openRackModal(rackId, rackLabel, latestByType) {
     if (!rackModalBody || !rackModalTitle || !rackModalSub) return;
     rackModalTitle.textContent = `${rackLabel} detailed diagnostics`;
-    rackModalSub.textContent = "Computing trends and derived health indicators...";
+    rackModalSub.textContent = "Loading charts and history…";
     rackModalBody.innerHTML = "<p class='modal-loading'>Loading sensor history...</p>";
     openModal();
 
+    const MODAL_POINTS = 40;
     const sensorResults = [];
+    const seriesBySensor = {};
+
     for (const st of SENSOR_ORDER) {
       try {
-        const data = await fetchJson(`/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=30`);
-        const values = (data.readings || []).map((r) => Number(r.value)).filter((v) => Number.isFinite(v));
+        const data = await fetchJson(
+          `/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=${MODAL_POINTS}`
+        );
+        const readings = (data.readings || []).slice().reverse();
+        const labels = readings.map((r) => (r.timestamp || "").slice(11, 19));
+        const values = readings.map((r) => parseFloat(r.value)).filter((v) => Number.isFinite(v));
         if (!values.length) {
           sensorResults.push({ st, trend: "no-data", volatility: "n/a", latest: null });
+          seriesBySensor[st] = { labels: [], values: [], metaText: "No data" };
           continue;
         }
-        const latest = values[0];
-        const oldest = values[values.length - 1];
+        const latest = values[values.length - 1];
+        const oldest = values[0];
         const drift = latest - oldest;
         const trend = drift > 0.25 ? "rising" : drift < -0.25 ? "falling" : "stable";
         const mean = values.reduce((a, b) => a + b, 0) / values.length;
         const variance = values.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / values.length;
         const stdev = Math.sqrt(variance);
+        let metaText = `Latest ${latest.toFixed(2)} · ${trend} · σ ${stdev.toFixed(2)}`;
+        if (values.length > 1) {
+          const prev = values[values.length - 2];
+          const delta = latest - prev;
+          metaText += ` · Δ ${delta >= 0 ? "+" : ""}${delta.toFixed(2)} vs prior`;
+        }
         sensorResults.push({ st, trend, volatility: stdev.toFixed(2), latest });
+        seriesBySensor[st] = { labels, values, metaText };
       } catch (_) {
         sensorResults.push({ st, trend: "error", volatility: "n/a", latest: null });
+        seriesBySensor[st] = { labels: [], values: [], metaText: "Load failed" };
       }
     }
 
     const riskFlags = [];
+    let flagRow = null;
     for (const st of SENSOR_ORDER) {
-      const item = latestByType && latestByType[st] ? latestByType[st] : null;
-      if (!item) continue;
-      if (item.overheating) riskFlags.push("Overheating condition active");
-      if (item.cooling_failure) riskFlags.push("Cooling failure risk flagged");
-      if (item.static_risk) riskFlags.push("Static risk flagged (low humidity)");
+      if (latestByType && latestByType[st]) {
+        flagRow = latestByType[st];
+        break;
+      }
     }
+    if (flagRow) {
+      if (flagRow.overheating) riskFlags.push("Overheating condition active");
+      if (flagRow.cooling_failure) riskFlags.push("Cooling failure risk flagged");
+      if (flagRow.static_risk) riskFlags.push("Static risk flagged (low humidity)");
+    }
+
     const trendRows = sensorResults
       .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td><td>${r.volatility}</td></tr>`)
       .join("");
     const riskHtml = riskFlags.length
-      ? `<ul class="modal-list">${riskFlags.map((x) => `<li>${x}</li>`).join("")}</ul>`
-      : "<p class='modal-ok'>No risk flags currently active for this rack.</p>";
+      ? `<div class="modal-risk-list">${riskFlags.map((x) => `<div class="modal-risk-item">${x}</div>`).join("")}</div>`
+      : "<p class='modal-ok'>No operational flags from fog layer for this rack.</p>";
 
-    rackModalSub.textContent = `Rack: ${rackId} · Updated ${new Date().toLocaleTimeString()}`;
+    const chartBoxes = SENSOR_ORDER.map((st) => {
+      const primary = st === "rack_temperature" ? " modal-chart-box--primary" : "";
+      return (
+        `<div class="modal-chart-box${primary}">` +
+        `<h5>${LABELS[st]}</h5>` +
+        `<canvas class="modal-chart-canvas" data-sensor="${st}" width="440" height="150"></canvas>` +
+        `<div class="modal-chart-meta" data-meta="${st}"></div>` +
+        `</div>`
+      );
+    }).join("");
+
+    rackModalSub.textContent = `Rack: ${rackId} · Charts: last ${MODAL_POINTS} points · ${new Date().toLocaleTimeString()}`;
     rackModalBody.innerHTML =
-      `<section class="modal-section"><h4>Current Sensor Health</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Current Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(
+      `<section class="modal-section modal-section--visual">` +
+      `<h4>Status and warnings</h4>` +
+      `<div class="modal-visual-row">` +
+      `<div class="modal-pie-wrap"><h5>Sensor state (now)</h5><canvas id="modal-health-pie" width="200" height="200"></canvas><p class="modal-pie-legend">By per-sensor thresholds (not rack card rule).</p></div>` +
+      `<div class="modal-banners">${buildModalBanners(latestByType, sensorResults, riskFlags)}</div>` +
+      `</div></section>` +
+      `<section class="modal-section"><h4>Trend charts (oldest → newest)</h4><p class="modal-section-hint">Dashed lines on rack temperature: warning ${RACK_TEMP_WARN_C}°C and critical ${RACK_TEMP_CRIT_C}°C.</p>` +
+      `<div class="modal-charts-grid">${chartBoxes}</div></section>` +
+      `<section class="modal-section"><h4>Current readings</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(
         latestByType
       )}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Trend and Stability (last 30 points)</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th><th>Volatility (std dev)</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Operational Flags</h4>${riskHtml}</section>` +
-      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>Watch trend stability: high volatility can indicate unstable thermal load.</li></ul></section>";
+      `<section class="modal-section"><h4>Trend summary</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th><th>Volatility</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
+      `<section class="modal-section"><h4>Operational flags</h4>${riskHtml}</section>` +
+      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>Use volatility: sustained high σ on rack temperature can mean unstable load or sensor placement issues.</li></ul></section>";
+
+    const pieCanvas = rackModalBody.querySelector("#modal-health-pie");
+    drawModalSensorHealthPie(pieCanvas, latestByType || {});
+
+    for (const st of SENSOR_ORDER) {
+      const canvas = rackModalBody.querySelector(`canvas.modal-chart-canvas[data-sensor="${st}"]`);
+      const meta = rackModalBody.querySelector(`[data-meta="${st}"]`);
+      const ser = seriesBySensor[st];
+      if (canvas && ser) {
+        drawLineChart(canvas, ser.labels, ser.values, st);
+        if (meta) meta.textContent = ser.metaText;
+      }
+    }
   }
 
   function enqueueAlert(message, level) {

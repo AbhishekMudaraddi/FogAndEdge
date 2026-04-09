@@ -96,6 +96,13 @@ body {
   color: var(--muted);
 }
 
+.overview-pie-note {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .overview-pie-wrap canvas {
   width: 100%;
   height: 180px;
@@ -321,7 +328,7 @@ body {
 .modal-content {
   position: relative;
   margin: 5vh auto 0;
-  width: min(900px, 92vw);
+  width: min(980px, 96vw);
   max-height: 90vh;
   overflow: auto;
   background: var(--surface);
@@ -435,11 +442,159 @@ body {
   margin: 0;
 }
 
+.modal-section--visual h4 {
+  margin-bottom: 0.5rem;
+}
+
+.modal-visual-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 220px) 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.modal-pie-wrap {
+  background: #101723;
+  border: 1px solid #2a3545;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  text-align: center;
+}
+
+.modal-pie-wrap h5 {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.modal-pie-wrap canvas {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.modal-pie-legend {
+  margin: 0.35rem 0 0;
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.modal-banners {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.modal-banner {
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #2a3545;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+}
+
+.modal-banner strong {
+  font-size: 0.84rem;
+}
+
+.modal-banner span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.modal-banner--ok {
+  border-color: rgba(61, 220, 151, 0.45);
+  background: rgba(61, 220, 151, 0.1);
+}
+
+.modal-banner--warning {
+  border-color: rgba(245, 166, 35, 0.55);
+  background: rgba(245, 166, 35, 0.12);
+}
+
+.modal-banner--critical {
+  border-color: rgba(232, 93, 93, 0.65);
+  background: rgba(232, 93, 93, 0.14);
+}
+
+.modal-banner--risk {
+  border-color: rgba(232, 93, 93, 0.45);
+  background: rgba(232, 93, 93, 0.08);
+}
+
+.modal-section-hint {
+  margin: 0 0 0.6rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.modal-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.modal-chart-box {
+  background: #101723;
+  border: 1px solid #2a3545;
+  border-radius: 8px;
+  padding: 0.55rem 0.6rem;
+}
+
+.modal-chart-box--primary {
+  grid-column: 1 / -1;
+}
+
+.modal-chart-box h5 {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.modal-chart-canvas {
+  width: 100%;
+  height: 150px;
+  display: block;
+}
+
+.modal-chart-meta {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.modal-risk-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.modal-risk-item {
+  border-left: 4px solid var(--danger);
+  background: rgba(232, 93, 93, 0.12);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.82rem;
+}
+
 @media (max-width: 980px) {
   .overview-analytics {
     grid-template-columns: 1fr;
   }
   .rack-details-list {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-visual-row {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-charts-grid {
     grid-template-columns: 1fr;
   }
 }
