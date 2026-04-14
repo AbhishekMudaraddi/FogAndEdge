@@ -37,6 +37,35 @@
         font-size: 13px;
       }
 
+      .top-nav {
+        position: absolute;
+        top: 14px;
+        left: 16px;
+        z-index: 1200;
+        display: flex;
+        gap: 8px;
+        background: rgba(10, 16, 28, 0.42);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 10px;
+        padding: 6px;
+        backdrop-filter: blur(6px);
+      }
+
+      .top-nav button {
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: transparent;
+        color: #dbe8ff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .top-nav button.active {
+        background: rgba(62, 166, 255, 0.25);
+        color: #ffffff;
+      }
+
       .region-panel {
         position: absolute;
         top: 78px;
@@ -157,10 +186,103 @@
         border: 0;
         background: #0d1322;
       }
+
+      .page-view {
+        position: absolute;
+        inset: 0;
+      }
+
+      .page-view.hidden {
+        display: none;
+      }
+
+      .data-view {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        padding: 80px 18px 18px;
+        background: radial-gradient(circle at top, #12233c 0%, #0b1424 55%, #080d18 100%);
+        color: #e8f0ff;
+      }
+
+      .data-wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .data-wrap h2 {
+        margin: 0 0 10px;
+      }
+
+      .data-wrap p {
+        margin: 0 0 14px;
+        color: #b8c9e9;
+      }
+
+      .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .overview-card {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 12px;
+      }
+
+      .overview-card h4 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: #d8e6ff;
+      }
+
+      .overview-card .metric {
+        font-size: 22px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .overview-card .submetric {
+        font-size: 13px;
+        color: #b8c9e9;
+      }
+
+      .table-wrap {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .table-wrap table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .table-wrap th,
+      .table-wrap td {
+        text-align: left;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+      }
+
+      .table-wrap th {
+        background: rgba(255, 255, 255, 0.07);
+      }
     </style>
   </head>
   <body>
+    <nav class="top-nav" aria-label="Main navigation">
+      <button type="button" class="nav-btn active" data-view="home-view">Home</button>
+      <button type="button" class="nav-btn" data-view="overview-view">AZs Overview</button>
+      <button type="button" class="nav-btn" data-view="compare-view">Compare</button>
+    </nav>
     <div class="hint-overlay">Drag to rotate · Scroll to zoom · Click region marker to open dashboard</div>
+    <section id="home-view" class="page-view">
     <aside class="region-panel" aria-label="Region controls">
       <h3>Select availability zone region</h3>
       <select id="region-select"></select>
@@ -168,6 +290,50 @@
       <button type="button" id="back-home" class="back-btn">Back</button>
     </aside>
     <div id="globe" aria-label="Global infrastructure globe"></div>
+    </section>
+    <section id="overview-view" class="page-view data-view hidden" aria-label="AZs overview">
+      <div class="data-wrap">
+        <h2>AZs Overview</h2>
+        <p>Live summary across configured dashboard regions and their availability zones.</p>
+        <div id="overview-grid" class="overview-grid"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>AZ count</th>
+                <th>Avg rack temp (°C)</th>
+                <th>Risk AZs</th>
+                <th>Hottest AZ</th>
+              </tr>
+            </thead>
+            <tbody id="overview-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <section id="compare-view" class="page-view data-view hidden" aria-label="AZ comparison">
+      <div class="data-wrap">
+        <h2>Compare AZs</h2>
+        <p>Cross-region comparison by latest thermal and airflow metrics.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>AZ</th>
+                <th>Rack Temp (°C)</th>
+                <th>Room Temp (°C)</th>
+                <th>Humidity (%)</th>
+                <th>Airflow (m/s)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="compare-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
     <section id="dashboard-modal" class="dashboard-modal" aria-hidden="true">
       <div class="dashboard-modal-backdrop" data-close="1"></div>
       <article class="dashboard-modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -274,6 +440,13 @@
 
       const regions = Array.isArray(cfg.regions) ? cfg.regions : [];
       const dashboardRegionSet = new Set(Array.isArray(cfg.dashboardRegions) ? cfg.dashboardRegions : []);
+      const navButtons = Array.from(document.querySelectorAll(".nav-btn"));
+      const views = {
+        "home-view": document.getElementById("home-view"),
+        "overview-view": document.getElementById("overview-view"),
+        "compare-view": document.getElementById("compare-view"),
+      };
+      const hintOverlay = document.querySelector(".hint-overlay");
       const regionByCode = {};
       const entityByCode = {};
       let focusedRegionCode = null;
@@ -319,6 +492,11 @@
       const modalClose = document.getElementById("modal-close");
       const modalTitle = document.getElementById("modal-title");
       const modalFrame = document.getElementById("dashboard-frame");
+      const overviewGrid = document.getElementById("overview-grid");
+      const overviewTableBody = document.getElementById("overview-table-body");
+      const compareTableBody = document.getElementById("compare-table-body");
+      let overviewLoaded = false;
+      let compareLoaded = false;
       if (select) {
         const placeholder = document.createElement("option");
         placeholder.value = "";
@@ -369,6 +547,149 @@
         modal.setAttribute("aria-hidden", "true");
         modalFrame.src = "";
       }
+
+      async function fetchRegionSummary(regionCode) {
+        const res = await fetch(`/api/racks-summary?region=${encodeURIComponent(regionCode)}`, { cache: "no-store" });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`Failed summary for ${regionCode}: ${res.status} ${txt}`);
+        }
+        return res.json();
+      }
+
+      function statusFromTemp(temp) {
+        if (temp >= 40) return "Critical";
+        if (temp >= 35) return "Warning";
+        return "Normal";
+      }
+
+      async function loadOverviewAndCompare() {
+        const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
+        const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
+
+        const summaryRows = [];
+        const compareRows = [];
+
+        settled.forEach((result, idx) => {
+          const code = regionCodes[idx];
+          const region = regionByCode[code];
+          if (result.status !== "fulfilled") {
+            summaryRows.push({
+              region: code,
+              azCount: 0,
+              avgTemp: "—",
+              riskCount: "—",
+              hottest: "No data",
+            });
+            return;
+          }
+          const payload = result.value || {};
+          const racksData = Array.isArray(payload.racks) ? payload.racks : [];
+          let sumTemp = 0;
+          let tempCount = 0;
+          let riskCount = 0;
+          let hottest = { label: "—", temp: -Infinity };
+
+          racksData.forEach((rackRow) => {
+            const latest = rackRow.latest || {};
+            const rTemp = latest.rack_temperature ? Number(latest.rack_temperature.value) : NaN;
+            const room = latest.room_temperature ? Number(latest.room_temperature.value) : NaN;
+            const hum = latest.humidity ? Number(latest.humidity.value) : NaN;
+            const air = latest.airflow ? Number(latest.airflow.value) : NaN;
+            const flags = latest.rack_temperature || latest.room_temperature || latest.humidity || latest.airflow || latest.outdoor_temperature;
+            if (flags && (flags.overheating || flags.cooling_failure || flags.static_risk)) riskCount += 1;
+            if (Number.isFinite(rTemp)) {
+              tempCount += 1;
+              sumTemp += rTemp;
+              if (rTemp > hottest.temp) hottest = { label: rackRow.label, temp: rTemp };
+            }
+            compareRows.push({
+              region: code,
+              regionName: region ? region.name : code,
+              az: rackRow.label || rackRow.rack_id || "—",
+              rackTemp: Number.isFinite(rTemp) ? rTemp.toFixed(2) : "—",
+              roomTemp: Number.isFinite(room) ? room.toFixed(2) : "—",
+              humidity: Number.isFinite(hum) ? hum.toFixed(2) : "—",
+              airflow: Number.isFinite(air) ? air.toFixed(2) : "—",
+              status: Number.isFinite(rTemp) ? statusFromTemp(rTemp) : "No data",
+            });
+          });
+
+          summaryRows.push({
+            region: `${code} (${region ? region.name : "Unknown"})`,
+            azCount: racksData.length,
+            avgTemp: tempCount ? (sumTemp / tempCount).toFixed(2) : "—",
+            riskCount,
+            hottest: hottest.temp > -Infinity ? `${hottest.label} (${hottest.temp.toFixed(2)}°C)` : "—",
+          });
+        });
+
+        if (overviewGrid) {
+          const totals = {
+            regions: summaryRows.length,
+            azs: summaryRows.reduce((a, b) => a + (Number(b.azCount) || 0), 0),
+            risks: summaryRows.reduce((a, b) => a + (Number(b.riskCount) || 0), 0),
+          };
+          const avgList = summaryRows.map((x) => Number(x.avgTemp)).filter((n) => Number.isFinite(n));
+          const fleetAvg = avgList.length ? (avgList.reduce((a, b) => a + b, 0) / avgList.length).toFixed(2) : "—";
+          overviewGrid.innerHTML =
+            `<article class="overview-card"><h4>Total Regions</h4><div class="metric">${totals.regions}</div><div class="submetric">Dashboard-enabled regions</div></article>` +
+            `<article class="overview-card"><h4>Total AZs</h4><div class="metric">${totals.azs}</div><div class="submetric">Across selected regions</div></article>` +
+            `<article class="overview-card"><h4>Fleet Avg Temp</h4><div class="metric">${fleetAvg}</div><div class="submetric">Rack temperature (°C)</div></article>` +
+            `<article class="overview-card"><h4>Risk AZs</h4><div class="metric">${totals.risks}</div><div class="submetric">Any fog risk flag active</div></article>`;
+        }
+
+        if (overviewTableBody) {
+          overviewTableBody.innerHTML = summaryRows
+            .map(
+              (r) =>
+                `<tr><td>${r.region}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.hottest}</td></tr>`
+            )
+            .join("");
+        }
+
+        if (compareTableBody) {
+          compareRows.sort((a, b) => {
+            const ax = Number(a.rackTemp);
+            const bx = Number(b.rackTemp);
+            if (Number.isFinite(ax) && Number.isFinite(bx)) return bx - ax;
+            if (Number.isFinite(ax)) return -1;
+            if (Number.isFinite(bx)) return 1;
+            return 0;
+          });
+          compareTableBody.innerHTML = compareRows
+            .map(
+              (r) =>
+                `<tr><td>${r.region}</td><td>${r.az}</td><td>${r.rackTemp}</td><td>${r.roomTemp}</td><td>${r.humidity}</td><td>${r.airflow}</td><td>${r.status}</td></tr>`
+            )
+            .join("");
+        }
+      }
+
+      function activateView(viewId) {
+        Object.entries(views).forEach(([id, el]) => {
+          if (!el) return;
+          el.classList.toggle("hidden", id !== viewId);
+        });
+        navButtons.forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.view === viewId);
+        });
+        if (hintOverlay) hintOverlay.style.display = viewId === "home-view" ? "block" : "none";
+        if (viewId === "overview-view" && !overviewLoaded) {
+          loadOverviewAndCompare().then(() => {
+            overviewLoaded = true;
+          });
+        }
+        if (viewId === "compare-view" && !compareLoaded) {
+          loadOverviewAndCompare().then(() => {
+            compareLoaded = true;
+          });
+        }
+      }
+
+      navButtons.forEach((btn) => {
+        btn.addEventListener("click", () => activateView(btn.dataset.view || "home-view"));
+      });
 
       function pauseAutoRotate() {
         if (!autoRotateEnabled) return;
@@ -459,6 +780,8 @@
       document.addEventListener("keydown", (evt) => {
         if (evt.key === "Escape") closeDashboardModal();
       });
+
+      activateView("home-view");
     </script>
   </body>
 </html>
