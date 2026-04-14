@@ -58,6 +58,7 @@
   let modalHealthPieChart = null;
   let azRacksTempChart = null;
   const azExtraCharts = new Map();
+  let modalRackContext = null;
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
@@ -70,6 +71,8 @@
   function updateCountdownDisplay() {
     const el = document.getElementById("refresh-countdown");
     if (el) el.textContent = String(Math.max(0, secUntilRefresh));
+    const modalEl = document.getElementById("modal-refresh-countdown");
+    if (modalEl) modalEl.textContent = String(Math.max(0, secUntilRefresh));
   }
 
   function setStatus(text, ok) {
@@ -238,9 +241,12 @@
     let maxRack = null;
     let riskRacks = 0;
     const statusCounts = { normal: 0, warning: 0, critical: 0 };
+    let totalRegionRacks = 0;
     for (const row of rows) {
       const tempItem = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
       const temp = tempItem ? Number(tempItem.value) : NaN;
+      const rackCount = tempItem && tempItem.rack_count != null ? Number(tempItem.rack_count) : 1;
+      if (Number.isFinite(rackCount)) totalRegionRacks += rackCount;
       if (!Number.isNaN(temp)) {
         totalTemp += temp;
         tempCount += 1;
@@ -257,10 +263,11 @@
       const avgText = tempCount ? `${(totalTemp / tempCount).toFixed(2)} °C` : "—";
       const maxText = maxRack && Number.isFinite(maxTemp) ? `${maxRack} (${maxTemp.toFixed(2)} °C)` : "—";
       overviewKpis.innerHTML =
-        `<article class="kpi-card"><h4>Total Racks</h4><strong>${rows.length}</strong></article>` +
+        `<article class="kpi-card"><h4>Total AZ</h4><strong>${rows.length}</strong></article>` +
+        `<article class="kpi-card"><h4>Total racks in region</h4><strong>${totalRegionRacks}</strong></article>` +
         `<article class="kpi-card"><h4>Avg Rack Temp</h4><strong>${avgText}</strong></article>` +
-        `<article class="kpi-card"><h4>Racks With Risk</h4><strong>${riskRacks}</strong></article>` +
-        `<article class="kpi-card"><h4>Hottest Rack</h4><strong>${maxText}</strong></article>`;
+        `<article class="kpi-card"><h4>Hottest AZ</h4><strong>${maxText}</strong></article>` +
+        `<article class="kpi-card"><h4>Risk</h4><strong>${riskRacks}</strong></article>`;
     }
     drawOverviewPie(statusCounts);
   }
@@ -433,6 +440,7 @@
     if (!rackModal) return;
     rackModal.classList.add("hidden");
     document.body.classList.remove("modal-open");
+    modalRackContext = null;
   }
 
   function sensorHealthRows(latestByType) {
@@ -646,6 +654,7 @@
     rackModalSub.textContent = "Loading AZ rack details…";
     rackModalBody.innerHTML = "<p class='modal-loading'>Loading AZ rack details...</p>";
     openModal();
+    modalRackContext = { rackId, rackLabel };
     modalLineCharts.forEach((chart) => chart.destroy());
     modalLineCharts.clear();
     if (modalHealthPieChart) {
@@ -663,7 +672,7 @@
         `/api/az-racks?az_id=${encodeURIComponent(rackId)}&region=${encodeURIComponent(SELECTED_REGION)}`
       );
       const azRacks = Array.isArray(azData.racks) ? azData.racks : [];
-      rackModalSub.textContent = rackId;
+      rackModalSub.innerHTML = `${rackId} · next refresh in <span id="modal-refresh-countdown">${Math.max(0, secUntilRefresh)}</span>s`;
 
       const cards = azRacks
         .map((rack) => {
@@ -882,6 +891,13 @@
     renderOverview(data);
     renderRackCards(data);
     await renderRegionalRacksChart();
+    if (modalRackContext && rackModal && !rackModal.classList.contains("hidden")) {
+      const rows = data.racks || [];
+      const active = rows.find((r) => r.rack_id === modalRackContext.rackId);
+      if (active) {
+        await openRackModal(active.rack_id, active.label, active.latest);
+      }
+    }
     if (data.errors && data.errors.length) {
       setStatus("Data issue: " + data.errors[0], false);
     } else {
