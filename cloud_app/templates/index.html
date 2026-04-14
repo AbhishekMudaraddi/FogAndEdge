@@ -228,6 +228,33 @@
         color: #b8c9e9;
       }
 
+      .overview-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .overview-meta {
+        font-size: 12px;
+        color: #9fb1cf;
+      }
+
+      .overview-refresh-btn {
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(62, 166, 255, 0.18);
+        color: #eaf2ff;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .overview-refresh-btn:hover {
+        background: rgba(62, 166, 255, 0.28);
+      }
+
       .overview-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -328,6 +355,10 @@
       <div class="data-wrap">
         <h2>AZs Overview</h2>
         <p>Live summary across configured dashboard regions and their availability zones.</p>
+        <div class="overview-toolbar">
+          <div id="overview-meta" class="overview-meta">Waiting for live data…</div>
+          <button id="overview-refresh" class="overview-refresh-btn" type="button">Refresh now</button>
+        </div>
         <div id="overview-grid" class="overview-grid"></div>
         <div class="charts-grid">
           <article class="chart-card">
@@ -545,10 +576,12 @@
       const compareTableBody = document.getElementById("compare-table-body");
       const overviewTempChartCanvas = document.getElementById("overview-temp-chart");
       const overviewRiskChartCanvas = document.getElementById("overview-risk-chart");
+      const overviewMeta = document.getElementById("overview-meta");
+      const overviewRefreshBtn = document.getElementById("overview-refresh");
       let overviewTempChart = null;
       let overviewRiskChart = null;
-      let overviewLoaded = false;
-      let compareLoaded = false;
+      let currentViewId = "home-view";
+      let dataRefreshInFlight = false;
       if (select) {
         const placeholder = document.createElement("option");
         placeholder.value = "";
@@ -623,7 +656,9 @@
           const n = Number(r.avgTemp);
           return Number.isFinite(n) ? Number(n.toFixed(2)) : null;
         });
-        const riskCounts = summaryRows.map((r) => Number(r.riskCount) || 0);
+        const totalRisk = summaryRows.reduce((acc, r) => acc + (Number(r.riskCount) || 0), 0);
+        const totalAzs = summaryRows.reduce((acc, r) => acc + (Number(r.azCount) || 0), 0);
+        const healthyAzs = Math.max(0, totalAzs - totalRisk);
 
         if (overviewTempChart) overviewTempChart.destroy();
         if (overviewRiskChart) overviewRiskChart.destroy();
@@ -659,17 +694,13 @@
         overviewRiskChart = new Chart(overviewRiskChartCanvas, {
           type: "doughnut",
           data: {
-            labels,
+            labels: ["Risk AZs", "Healthy AZs"],
             datasets: [
               {
-                data: riskCounts,
+                data: [totalRisk, healthyAzs],
                 backgroundColor: [
-                  "rgba(255, 99, 132, 0.8)",
-                  "rgba(255, 159, 64, 0.8)",
-                  "rgba(255, 205, 86, 0.8)",
-                  "rgba(75, 192, 192, 0.8)",
-                  "rgba(54, 162, 235, 0.8)",
-                  "rgba(153, 102, 255, 0.8)",
+                  "rgba(232, 93, 93, 0.85)",
+                  "rgba(61, 220, 151, 0.8)",
                 ],
                 borderWidth: 1,
               },
@@ -689,13 +720,17 @@
       }
 
       async function loadOverviewAndCompare() {
-        const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
-        const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
+        if (dataRefreshInFlight) return;
+        dataRefreshInFlight = true;
+        try {
+          const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
+          if (overviewMeta) overviewMeta.textContent = "Refreshing live AZ metrics…";
+          const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
 
-        const summaryRows = [];
-        const compareRows = [];
+          const summaryRows = [];
+          const compareRows = [];
 
-        settled.forEach((result, idx) => {
+          settled.forEach((result, idx) => {
           const code = regionCodes[idx];
           const region = regionByCode[code];
           if (result.status !== "fulfilled") {
@@ -753,7 +788,7 @@
           });
         });
 
-        if (overviewGrid) {
+          if (overviewGrid) {
           const totals = {
             regions: summaryRows.length,
             azs: summaryRows.reduce((a, b) => a + (Number(b.azCount) || 0), 0),
@@ -768,7 +803,7 @@
             `<article class="overview-card"><h4>Risk AZs</h4><div class="metric">${totals.risks}</div><div class="submetric">Any fog risk flag active</div></article>`;
         }
 
-        if (overviewTableBody) {
+          if (overviewTableBody) {
           overviewTableBody.innerHTML = summaryRows
             .map(
               (r) =>
@@ -777,9 +812,9 @@
             .join("");
         }
 
-        renderOverviewCharts(summaryRows);
+          renderOverviewCharts(summaryRows);
 
-        if (compareTableBody) {
+          if (compareTableBody) {
           compareRows.sort((a, b) => {
             const ax = Number(a.rackTemp);
             const bx = Number(b.rackTemp);
@@ -795,9 +830,19 @@
             )
             .join("");
         }
+
+          if (overviewMeta) {
+            overviewMeta.textContent = `Last updated: ${new Date().toLocaleTimeString()} · Regions: ${summaryRows.length}`;
+          }
+        } catch (err) {
+          if (overviewMeta) overviewMeta.textContent = "Refresh failed. Check API/data pipeline.";
+        } finally {
+          dataRefreshInFlight = false;
+        }
       }
 
       function activateView(viewId) {
+        currentViewId = viewId;
         Object.entries(views).forEach(([id, el]) => {
           if (!el) return;
           el.classList.toggle("hidden", id !== viewId);
@@ -806,21 +851,18 @@
           btn.classList.toggle("active", btn.dataset.view === viewId);
         });
         if (hintOverlay) hintOverlay.style.display = viewId === "home-view" ? "block" : "none";
-        if (viewId === "overview-view" && !overviewLoaded) {
-          loadOverviewAndCompare().then(() => {
-            overviewLoaded = true;
-          });
-        }
-        if (viewId === "compare-view" && !compareLoaded) {
-          loadOverviewAndCompare().then(() => {
-            compareLoaded = true;
-          });
+        if (viewId === "overview-view" || viewId === "compare-view") {
+          loadOverviewAndCompare();
         }
       }
 
       navButtons.forEach((btn) => {
         btn.addEventListener("click", () => activateView(btn.dataset.view || "home-view"));
       });
+
+      if (overviewRefreshBtn) {
+        overviewRefreshBtn.addEventListener("click", () => loadOverviewAndCompare());
+      }
 
       function pauseAutoRotate() {
         if (!autoRotateEnabled) return;
@@ -913,6 +955,11 @@
       });
 
       activateView("home-view");
+      setInterval(() => {
+        if (currentViewId === "overview-view" || currentViewId === "compare-view") {
+          loadOverviewAndCompare();
+        }
+      }, 30000);
     </script>
   </body>
 </html>

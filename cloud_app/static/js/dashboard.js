@@ -50,6 +50,10 @@
   const rackModalTitle = document.getElementById("rack-modal-title");
   const rackModalSub = document.getElementById("rack-modal-sub");
   const rackModalBody = document.getElementById("rack-modal-body");
+  const hasChartJs = typeof window.Chart !== "undefined";
+  let overviewPieChart = null;
+  const modalLineCharts = new Map();
+  let modalHealthPieChart = null;
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
@@ -193,51 +197,33 @@
   }
 
   function drawOverviewPie(counts) {
-    if (!overviewPie) return;
-    const ctx = overviewPie.getContext("2d");
-    const w = overviewPie.width;
-    const h = overviewPie.height;
-    const cx = 96;
-    const cy = h / 2;
-    const r = 62;
-    const total = Math.max(1, counts.normal + counts.warning + counts.critical);
-    ctx.clearRect(0, 0, w, h);
-    const slices = [
-      { key: "normal", label: "Normal", color: "#3ddc97", value: counts.normal },
-      { key: "warning", label: "Warning", color: "#f5a623", value: counts.warning },
-      { key: "critical", label: "Critical", color: "#e85d5d", value: counts.critical },
-    ];
-    let start = -Math.PI / 2;
-    for (const s of slices) {
-      const angle = (s.value / total) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, start, start + angle);
-      ctx.closePath();
-      ctx.fillStyle = s.color;
-      ctx.fill();
-      start += angle;
-    }
-    ctx.beginPath();
-    ctx.fillStyle = "#121a26";
-    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#e7ecf3";
-    ctx.font = "bold 16px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText(String(counts.normal + counts.warning + counts.critical), cx, cy + 6);
-
-    ctx.textAlign = "left";
-    ctx.font = "12px system-ui";
-    const lx = 190;
-    let ly = 54;
-    for (const s of slices) {
-      ctx.fillStyle = s.color;
-      ctx.fillRect(lx, ly - 9, 10, 10);
-      ctx.fillStyle = "#c9d4e5";
-      ctx.fillText(`${s.label}: ${s.value}`, lx + 16, ly);
-      ly += 28;
-    }
+    if (!overviewPie || !hasChartJs) return;
+    if (overviewPieChart) overviewPieChart.destroy();
+    overviewPieChart = new window.Chart(overviewPie, {
+      type: "doughnut",
+      data: {
+        labels: ["Normal", "Warning", "Critical"],
+        datasets: [
+          {
+            data: [counts.normal, counts.warning, counts.critical],
+            backgroundColor: ["#3ddc97", "#f5a623", "#e85d5d"],
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.12)",
+          },
+        ],
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        cutout: "55%",
+        plugins: {
+          legend: {
+            position: "right",
+            labels: { color: "#c9d4e5", boxWidth: 10, boxHeight: 10 },
+          },
+        },
+      },
+    });
   }
 
   function renderOverview(summary) {
@@ -401,65 +387,70 @@
   }
 
   function drawLineChart(canvas, labels, values, sensorType) {
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    if (!values.length) {
-      ctx.fillStyle = "#8b9bb4";
-      ctx.font = "13px system-ui";
-      ctx.fillText("No points", 8, 24);
-      return;
+    if (!hasChartJs || !canvas) return;
+    const key = sensorType + ":" + (canvas.dataset.sensor || sensorType);
+    const existing = modalLineCharts.get(key);
+    if (existing) {
+      existing.destroy();
+      modalLineCharts.delete(key);
     }
-    const pad = 12;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    const isHot = sensorType === "rack_temperature";
-    ctx.strokeStyle = isHot ? "#e85d5d" : "#3d9cf5";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    values.forEach((v, i) => {
-      const x = pad + (i / Math.max(values.length - 1, 1)) * (w - pad * 2);
-      const y = pad + (1 - (v - min) / span) * (h - pad * 2);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = "#8b9bb4";
-    ctx.font = "11px system-ui";
-    ctx.textAlign = "left";
-    ctx.fillText(labels[0] || "", pad, h - 4);
-    ctx.textAlign = "right";
-    ctx.fillText(labels[labels.length - 1] || "", w - pad, h - 4);
-    ctx.textAlign = "left";
 
-    if (sensorType === "rack_temperature") {
-      const yWarn = pad + (1 - (RACK_TEMP_WARN_C - min) / span) * (h - pad * 2);
-      const yCrit = pad + (1 - (RACK_TEMP_CRIT_C - min) / span) * (h - pad * 2);
-      if (yWarn >= pad && yWarn <= h - pad) {
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "rgba(245,166,35,0.85)";
-        ctx.beginPath();
-        ctx.moveTo(pad, yWarn);
-        ctx.lineTo(w - pad, yWarn);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      if (yCrit >= pad && yCrit <= h - pad) {
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "rgba(232,93,93,0.85)";
-        ctx.beginPath();
-        ctx.moveTo(pad, yCrit);
-        ctx.lineTo(w - pad, yCrit);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+    const isHot = sensorType === "rack_temperature";
+    const datasets = [
+      {
+        label: LABELS[sensorType] || sensorType,
+        data: values,
+        borderColor: isHot ? "#e85d5d" : "#3d9cf5",
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.25,
+      },
+    ];
+    if (isHot) {
+      datasets.push(
+        {
+          label: `Warn ${RACK_TEMP_WARN_C}°C`,
+          data: values.map(() => RACK_TEMP_WARN_C),
+          borderColor: "rgba(245,166,35,0.9)",
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+        },
+        {
+          label: `Critical ${RACK_TEMP_CRIT_C}°C`,
+          data: values.map(() => RACK_TEMP_CRIT_C),
+          borderColor: "rgba(232,93,93,0.9)",
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+        }
+      );
     }
+
+    const chart = new window.Chart(canvas, {
+      type: "line",
+      data: {
+        labels: labels.length ? labels : values.map((_, i) => String(i + 1)),
+        datasets,
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: isHot, labels: { color: "#c9d4e5", boxWidth: 10 } },
+        },
+        scales: {
+          x: { ticks: { color: "#8b9bb4", maxTicksLimit: 6 }, grid: { color: "rgba(255,255,255,0.08)" } },
+          y: { ticks: { color: "#8b9bb4" }, grid: { color: "rgba(255,255,255,0.1)" } },
+        },
+      },
+    });
+    modalLineCharts.set(key, chart);
   }
 
   function drawModalSensorHealthPie(canvas, latestByType) {
-    if (!canvas || !latestByType) return;
+    if (!canvas || !latestByType || !hasChartJs) return;
     let normal = 0;
     let warning = 0;
     let critical = 0;
@@ -471,47 +462,32 @@
       else if (c === "warning") warning += 1;
       else normal += 1;
     }
-    const total = normal + warning + critical;
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-    const cx = w / 2;
-    const cy = h / 2;
-    const r = Math.min(w, h) / 2 - 8;
-    ctx.clearRect(0, 0, w, h);
-    if (!total) {
-      ctx.fillStyle = "#8b9bb4";
-      ctx.font = "12px system-ui";
-      ctx.textAlign = "center";
-      ctx.fillText("No data", cx, cy);
-      ctx.textAlign = "left";
-      return;
-    }
-    const slices = [
-      { color: "#3ddc97", v: normal },
-      { color: "#f5a623", v: warning },
-      { color: "#e85d5d", v: critical },
-    ];
-    let start = -Math.PI / 2;
-    for (const s of slices) {
-      const angle = (s.v / total) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, start, start + angle);
-      ctx.closePath();
-      ctx.fillStyle = s.color;
-      ctx.fill();
-      start += angle;
-    }
-    ctx.beginPath();
-    ctx.fillStyle = "#121a26";
-    ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#e7ecf3";
-    ctx.font = "bold 14px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText(String(total), cx, cy + 5);
-    ctx.textAlign = "left";
+    if (modalHealthPieChart) modalHealthPieChart.destroy();
+    modalHealthPieChart = new window.Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: ["Normal", "Warning", "Critical"],
+        datasets: [
+          {
+            data: [normal, warning, critical],
+            backgroundColor: ["#3ddc97", "#f5a623", "#e85d5d"],
+            borderColor: "rgba(255,255,255,0.15)",
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        cutout: "52%",
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { color: "#c9d4e5", boxWidth: 10, boxHeight: 10 },
+          },
+        },
+      },
+    });
   }
 
   function buildModalBanners(latestByType, sensorResults, riskFlagMessages) {
@@ -563,6 +539,12 @@
     const MODAL_POINTS = 40;
     const sensorResults = [];
     const seriesBySensor = {};
+    modalLineCharts.forEach((chart) => chart.destroy());
+    modalLineCharts.clear();
+    if (modalHealthPieChart) {
+      modalHealthPieChart.destroy();
+      modalHealthPieChart = null;
+    }
 
     for (const st of SENSOR_ORDER) {
       try {
