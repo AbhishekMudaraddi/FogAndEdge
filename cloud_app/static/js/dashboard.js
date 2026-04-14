@@ -57,6 +57,7 @@
   const modalLineCharts = new Map();
   let modalHealthPieChart = null;
   let azRacksTempChart = null;
+  const azExtraCharts = new Map();
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
@@ -607,16 +608,56 @@
     return parts.join("");
   }
 
+  function drawAzRacksHealthPie(canvas, racksData) {
+    if (!canvas || !hasChartJs) return;
+    let normal = 0;
+    let warning = 0;
+    let critical = 0;
+    for (const rack of racksData || []) {
+      const latest = rack.latest || {};
+      const temp = latest.rack_temperature ? Number(latest.rack_temperature.value) : NaN;
+      if (!Number.isFinite(temp)) continue;
+      if (temp >= RACK_TEMP_CRIT_C) critical += 1;
+      else if (temp >= RACK_TEMP_WARN_C) warning += 1;
+      else normal += 1;
+    }
+    if (modalHealthPieChart) {
+      modalHealthPieChart.destroy();
+      modalHealthPieChart = null;
+    }
+    modalHealthPieChart = new window.Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: ["Normal", "Warning", "Critical"],
+        datasets: [
+          {
+            data: [normal, warning, critical],
+            backgroundColor: ["#3ddc97", "#f5a623", "#e85d5d"],
+            borderColor: "rgba(255,255,255,0.15)",
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        cutout: "52%",
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { color: "#c9d4e5", boxWidth: 10, boxHeight: 10 },
+          },
+        },
+      },
+    });
+  }
+
   async function openRackModal(rackId, rackLabel, latestByType) {
     if (!rackModalBody || !rackModalTitle || !rackModalSub) return;
     rackModalTitle.textContent = `${rackLabel} detailed diagnostics`;
-    rackModalSub.textContent = "Loading charts and history…";
-    rackModalBody.innerHTML = "<p class='modal-loading'>Loading sensor history...</p>";
+    rackModalSub.textContent = "Loading AZ rack details…";
+    rackModalBody.innerHTML = "<p class='modal-loading'>Loading AZ rack details...</p>";
     openModal();
-
-    const MODAL_POINTS = 40;
-    const sensorResults = [];
-    const seriesBySensor = {};
     modalLineCharts.forEach((chart) => chart.destroy());
     modalLineCharts.clear();
     if (modalHealthPieChart) {
@@ -627,160 +668,145 @@
       azRacksTempChart.destroy();
       azRacksTempChart = null;
     }
-
-    for (const st of SENSOR_ORDER) {
-      try {
-        const data = await fetchJson(
-          `/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=${MODAL_POINTS}&region=${encodeURIComponent(
-            SELECTED_REGION
-          )}`
-        );
-        const readings = (data.readings || []).slice().reverse();
-        const labels = readings.map((r) => (r.timestamp || "").slice(11, 19));
-        const values = readings.map((r) => parseFloat(r.value)).filter((v) => Number.isFinite(v));
-        if (!values.length) {
-          sensorResults.push({ st, trend: "no-data", latest: null });
-          seriesBySensor[st] = { labels: [], values: [], metaText: "No data" };
-          continue;
-        }
-        const latest = values[values.length - 1];
-        const oldest = values[0];
-        const drift = latest - oldest;
-        const trend = drift > 0.25 ? "rising" : drift < -0.25 ? "falling" : "stable";
-        const metaText = `Latest: ${latest.toFixed(2)}`;
-        sensorResults.push({ st, trend, latest });
-        seriesBySensor[st] = { labels, values, metaText };
-      } catch (_) {
-        sensorResults.push({ st, trend: "error", latest: null });
-        seriesBySensor[st] = { labels: [], values: [], metaText: "Load failed" };
-      }
-    }
-
-    const riskFlags = [];
-    let flagRow = null;
-    for (const st of SENSOR_ORDER) {
-      if (latestByType && latestByType[st]) {
-        flagRow = latestByType[st];
-        break;
-      }
-    }
-    if (flagRow) {
-      if (flagRow.overheating) riskFlags.push("Overheating condition active");
-      if (flagRow.cooling_failure) riskFlags.push("Cooling failure risk flagged");
-      if (flagRow.static_risk) riskFlags.push("Static risk flagged (low humidity)");
-    }
-
-    const trendRows = sensorResults
-      .map((r) => `<tr><td>${LABELS[r.st]}</td><td>${r.trend}</td></tr>`)
-      .join("");
-
-    const chartBoxes = SENSOR_ORDER.map((st) => {
-      const primary = st === "rack_temperature" ? " modal-chart-box--primary" : "";
-      return (
-        `<div class="modal-chart-box${primary}">` +
-        `<h5>${LABELS[st]}</h5>` +
-        `<canvas class="modal-chart-canvas" data-sensor="${st}" width="440" height="150"></canvas>` +
-        `<div class="modal-chart-meta" data-meta="${st}"></div>` +
-        `</div>`
+    azExtraCharts.forEach((chart) => chart.destroy());
+    azExtraCharts.clear();
+    try {
+      const azData = await fetchJson(
+        `/api/az-racks?az_id=${encodeURIComponent(rackId)}&region=${encodeURIComponent(SELECTED_REGION)}`
       );
-    }).join("");
+      const azRacks = Array.isArray(azData.racks) ? azData.racks : [];
+      rackModalSub.textContent = rackId;
 
-    rackModalSub.textContent = rackId;
-    rackModalBody.innerHTML =
-      `<section class="modal-section modal-section--visual">` +
-      `<h4>Status and warnings</h4>` +
-      `<div class="modal-visual-row">` +
-      `<div class="modal-pie-wrap"><h5>Sensor state (now)</h5><canvas id="modal-health-pie" width="200" height="200"></canvas><p class="modal-pie-legend">By per-sensor thresholds (not rack card rule).</p></div>` +
-      `<div class="modal-banners">${buildModalBanners(latestByType, sensorResults, riskFlags)}</div>` +
-      `</div></section>` +
-      `<section class="modal-section"><h4>Trend charts (oldest → newest)</h4><p class="modal-section-hint">Dashed lines on rack temperature: warning ${RACK_TEMP_WARN_C}°C and critical ${RACK_TEMP_CRIT_C}°C.</p>` +
-      `<div class="modal-charts-grid">${chartBoxes}</div></section>` +
-      `<section class="modal-section"><h4>Current readings</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Value</th><th>State</th></tr></thead><tbody>${sensorHealthRows(
-        latestByType
-      )}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Trend summary</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
-      `<section class="modal-section"><h4>Racks inside this AZ</h4><div id="az-racks-area"><p class="modal-loading">Loading rack-level details…</p></div></section>` +
-      "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>If rack temperature keeps climbing on the chart, check cooling and workload.</li></ul></section>";
+      const cards = azRacks
+        .map((rack) => {
+          const latest = rack.latest || {};
+          return (
+            `<article class="kpi-card">` +
+            `<h4>${rack.label || rack.rack_id}</h4>` +
+            `<strong>${metricCell(latest, "rack_temperature")}</strong>` +
+            `<div class="submetric">Room: ${metricCell(latest, "room_temperature")}</div>` +
+            `<div class="submetric">Humidity: ${metricCell(latest, "humidity")}</div>` +
+            `<div class="submetric">Airflow: ${metricCell(latest, "airflow")}</div>` +
+            `</article>`
+          );
+        })
+        .join("");
 
-    const pieCanvas = rackModalBody.querySelector("#modal-health-pie");
-    drawModalSensorHealthPie(pieCanvas, latestByType || {});
+      rackModalBody.innerHTML =
+        `<section class="modal-section modal-section--visual">` +
+        `<h4>AZ rack details</h4>` +
+        `<div class="modal-visual-row">` +
+        `<div class="overview-kpis">${cards}</div>` +
+        `<div class="modal-pie-wrap"><h5>Rack temperature state</h5><canvas id="modal-health-pie" width="220" height="220"></canvas></div>` +
+        `</div></section>` +
+        `<section class="modal-section"><h4>Rack temperature trend by rack</h4><div class="modal-chart-box modal-chart-box--primary"><canvas id="az-racks-temp-chart" width="760" height="240"></canvas></div></section>` +
+        `<section class="modal-section"><h4>Other sensor trends (AZ aggregate)</h4><div class="modal-charts-grid">` +
+        `<div class="modal-chart-box"><h5>Room °C</h5><canvas id="az-room-chart" width="440" height="150"></canvas><div class="modal-chart-meta" id="az-room-meta">Loading…</div></div>` +
+        `<div class="modal-chart-box"><h5>Humidity %</h5><canvas id="az-humidity-chart" width="440" height="150"></canvas><div class="modal-chart-meta" id="az-humidity-meta">Loading…</div></div>` +
+        `<div class="modal-chart-box"><h5>Airflow m/s</h5><canvas id="az-airflow-chart" width="440" height="150"></canvas><div class="modal-chart-meta" id="az-airflow-meta">Loading…</div></div>` +
+        `<div class="modal-chart-box"><h5>Outdoor °C</h5><canvas id="az-outdoor-chart" width="440" height="150"></canvas><div class="modal-chart-meta" id="az-outdoor-meta">Loading…</div></div>` +
+        `</div></section>`;
 
-    for (const st of SENSOR_ORDER) {
-      const canvas = rackModalBody.querySelector(`canvas.modal-chart-canvas[data-sensor="${st}"]`);
-      const meta = rackModalBody.querySelector(`[data-meta="${st}"]`);
-      const ser = seriesBySensor[st];
-      if (canvas && ser) {
-        drawLineChart(canvas, ser.labels, ser.values, st);
-        if (meta) meta.textContent = ser.metaText;
-      }
-    }
+      const pieCanvas = rackModalBody.querySelector("#modal-health-pie");
+      drawAzRacksHealthPie(pieCanvas, azRacks);
 
-    const azArea = rackModalBody.querySelector("#az-racks-area");
-    if (azArea) {
-      try {
-        const azData = await fetchJson(
-          `/api/az-racks?az_id=${encodeURIComponent(rackId)}&region=${encodeURIComponent(SELECTED_REGION)}`
-        );
-        const azRacks = Array.isArray(azData.racks) ? azData.racks : [];
-        const rows = azRacks
-          .map((r) => {
-            const latest = r.latest || {};
-            return `<tr>
-              <td>${r.label || r.rack_id}</td>
-              <td>${metricCell(latest, "rack_temperature")}</td>
-              <td>${metricCell(latest, "room_temperature")}</td>
-              <td>${metricCell(latest, "humidity")}</td>
-              <td>${metricCell(latest, "airflow")}</td>
-            </tr>`;
-          })
-          .join("");
-        azArea.innerHTML =
-          `<table class="modal-table"><thead><tr><th>Rack</th><th>Rack Temp</th><th>Room Temp</th><th>Humidity</th><th>Airflow</th></tr></thead><tbody>${rows}</tbody></table>` +
-          `<div class="modal-chart-box modal-chart-box--primary"><h5>Rack temperature trend by rack</h5><canvas id="az-racks-temp-chart" width="720" height="220"></canvas></div>`;
-
-        if (hasChartJs) {
-          const chartCanvas = rackModalBody.querySelector("#az-racks-temp-chart");
-          if (chartCanvas) {
-            const palette = ["#3ea6ff", "#3ddc97", "#f5a623", "#e85d5d", "#b18cff"];
-            let labels = [];
-            const datasets = azRacks.map((rack, idx) => {
-              const points = Array.isArray(rack.rack_temperature_series) ? rack.rack_temperature_series : [];
-              const vals = points.map((p) => Number(p.value)).filter((v) => Number.isFinite(v));
-              const labs = points.map((p) => String(p.timestamp || "").slice(11, 19));
-              if (!labels.length) labels = labs;
-              return {
-                label: rack.label || rack.rack_id,
-                data: vals,
-                borderColor: palette[idx % palette.length],
-                backgroundColor: "transparent",
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.25,
-              };
-            });
-            azRacksTempChart = new window.Chart(chartCanvas, {
-              type: "line",
-              data: {
-                labels,
-                datasets,
+      if (hasChartJs) {
+        const chartCanvas = rackModalBody.querySelector("#az-racks-temp-chart");
+        if (chartCanvas) {
+          const palette = ["#3ea6ff", "#3ddc97", "#f5a623", "#e85d5d", "#b18cff"];
+          let labels = [];
+          const datasets = azRacks.map((rack, idx) => {
+            const points = Array.isArray(rack.rack_temperature_series) ? rack.rack_temperature_series : [];
+            const vals = points.map((p) => Number(p.value)).filter((v) => Number.isFinite(v));
+            const labs = points.map((p) => String(p.timestamp || "").slice(11, 19));
+            if (!labels.length) labels = labs;
+            return {
+              label: rack.label || rack.rack_id,
+              data: vals,
+              borderColor: palette[idx % palette.length],
+              backgroundColor: "transparent",
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.25,
+            };
+          });
+          azRacksTempChart = new window.Chart(chartCanvas, {
+            type: "line",
+            data: {
+              labels,
+              datasets,
+            },
+            options: {
+              responsive: false,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { labels: { color: "#c9d4e5", boxWidth: 10 } },
               },
-              options: {
-                responsive: false,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { labels: { color: "#c9d4e5", boxWidth: 10 } },
-                },
-                scales: {
-                  x: { ticks: { color: "#8b9bb4", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.08)" } },
-                  y: { ticks: { color: "#8b9bb4" }, grid: { color: "rgba(255,255,255,0.1)" } },
-                },
+              scales: {
+                x: { ticks: { color: "#8b9bb4", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.08)" } },
+                y: { ticks: { color: "#8b9bb4" }, grid: { color: "rgba(255,255,255,0.1)" } },
               },
-            });
-          }
+            },
+          });
         }
-      } catch (_) {
-        azArea.innerHTML = "<p class='modal-loading'>Unable to load rack-level AZ details.</p>";
       }
+
+      const azExtra = [
+        { st: "room_temperature", canvasId: "az-room-chart", metaId: "az-room-meta", color: "#3ea6ff" },
+        { st: "humidity", canvasId: "az-humidity-chart", metaId: "az-humidity-meta", color: "#3ddc97" },
+        { st: "airflow", canvasId: "az-airflow-chart", metaId: "az-airflow-meta", color: "#f5a623" },
+        { st: "outdoor_temperature", canvasId: "az-outdoor-chart", metaId: "az-outdoor-meta", color: "#b18cff" },
+      ];
+
+      for (const spec of azExtra) {
+        try {
+          const sensorData = await fetchJson(
+            `/api/sensors/${encodeURIComponent(spec.st)}?rack_id=${encodeURIComponent(rackId)}&region=${encodeURIComponent(
+              SELECTED_REGION
+            )}&n=40`
+          );
+          const readings = (sensorData.readings || []).slice().reverse();
+          const labels = readings.map((r) => String(r.timestamp || "").slice(11, 19));
+          const values = readings.map((r) => Number(r.value)).filter((v) => Number.isFinite(v));
+          const metaEl = rackModalBody.querySelector(`#${spec.metaId}`);
+          if (metaEl) metaEl.textContent = values.length ? `Latest: ${values[values.length - 1].toFixed(2)}` : "No data";
+          if (!hasChartJs) continue;
+          const canvas = rackModalBody.querySelector(`#${spec.canvasId}`);
+          if (!canvas) continue;
+          const chart = new window.Chart(canvas, {
+            type: "line",
+            data: {
+              labels,
+              datasets: [
+                {
+                  label: spec.st,
+                  data: values,
+                  borderColor: spec.color,
+                  backgroundColor: "transparent",
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  tension: 0.25,
+                },
+              ],
+            },
+            options: {
+              responsive: false,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { ticks: { color: "#8b9bb4", maxTicksLimit: 7 }, grid: { color: "rgba(255,255,255,0.08)" } },
+                y: { ticks: { color: "#8b9bb4" }, grid: { color: "rgba(255,255,255,0.1)" } },
+              },
+            },
+          });
+          azExtraCharts.set(spec.st, chart);
+        } catch (_) {
+          const metaEl = rackModalBody.querySelector(`#${spec.metaId}`);
+          if (metaEl) metaEl.textContent = "Load failed";
+        }
+      }
+    } catch (_) {
+      rackModalBody.innerHTML = "<p class='modal-loading'>Unable to load rack-level AZ details.</p>";
     }
   }
 
