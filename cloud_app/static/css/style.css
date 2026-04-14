@@ -499,9 +499,19 @@ body {
 
 .modal-visual-row {
   display: grid;
-  grid-template-columns: minmax(200px, 220px) 1fr;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
+}
+
+.modal-visual-row .overview-kpis {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  align-self: start;
+}
+
+.modal-visual-row .overview-kpis .kpi-card {
+  min-height: 138px;
 }
 
 .modal-pie-wrap {
