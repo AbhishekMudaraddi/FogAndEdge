@@ -145,6 +145,8 @@ def enrich_item(
         item["datacenter_id"] = str(reading["datacenter_id"])
     if reading.get("region"):
         item["region"] = str(reading["region"])
+    if reading.get("az_id"):
+        item["az_id"] = str(reading["az_id"])
 
     ce = derived.get("cooling_efficiency")
     if ce is not None:

@@ -45,6 +45,7 @@
   const alertsPanel = document.getElementById("alerts-panel");
   const overviewKpis = document.getElementById("overview-kpis");
   const overviewPie = document.getElementById("overview-pie");
+  const regionalRacksChartCanvas = document.getElementById("regional-racks-chart");
   const rackModal = document.getElementById("rack-modal");
   const rackModalClose = document.getElementById("rack-modal-close");
   const rackModalTitle = document.getElementById("rack-modal-title");
@@ -52,8 +53,10 @@
   const rackModalBody = document.getElementById("rack-modal-body");
   const hasChartJs = typeof window.Chart !== "undefined";
   let overviewPieChart = null;
+  let regionalRacksChart = null;
   const modalLineCharts = new Map();
   let modalHealthPieChart = null;
+  let azRacksTempChart = null;
 
   const racks = cfg.rackIds || [];
   let selectedRackId = cfg.defaultRackId || (racks[0] && racks[0].rack_id) || "rack_01";
@@ -259,6 +262,81 @@
         `<article class="kpi-card"><h4>Hottest Rack</h4><strong>${maxText}</strong></article>`;
     }
     drawOverviewPie(statusCounts);
+  }
+
+  async function renderRegionalRacksChart() {
+    if (!hasChartJs || !regionalRacksChartCanvas || !racks.length) return;
+    const seriesPoints = 35;
+    const palette = ["#3ea6ff", "#3ddc97", "#f5a623", "#e85d5d", "#b18cff", "#23c0d8"];
+    const datasets = [];
+    let labels = [];
+
+    for (let i = 0; i < racks.length; i += 1) {
+      const rack = racks[i];
+      try {
+        const data = await fetchJson(
+          `/api/sensors/rack_temperature?rack_id=${encodeURIComponent(rack.rack_id)}&region=${encodeURIComponent(
+            SELECTED_REGION
+          )}&n=${seriesPoints}`
+        );
+        const readings = (data.readings || []).slice().reverse();
+        const vals = readings.map((r) => Number(r.value)).filter((v) => Number.isFinite(v));
+        const timeLabels = readings.map((r) => String(r.timestamp || "").slice(11, 19));
+        if (!labels.length) labels = timeLabels;
+        datasets.push({
+          label: rack.label || rack.rack_id,
+          data: vals,
+          borderColor: palette[i % palette.length],
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          tension: 0.25,
+          borderWidth: 2,
+        });
+      } catch (_) {
+        datasets.push({
+          label: rack.label || rack.rack_id,
+          data: [],
+          borderColor: palette[i % palette.length],
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          tension: 0.25,
+          borderWidth: 2,
+        });
+      }
+    }
+
+    if (regionalRacksChart) regionalRacksChart.destroy();
+    regionalRacksChart = new window.Chart(regionalRacksChartCanvas, {
+      type: "line",
+      data: {
+        labels: labels.length ? labels : Array.from({ length: seriesPoints }, (_, i) => String(i + 1)),
+        datasets,
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: "top",
+            labels: { color: "#c9d4e5", boxWidth: 12 },
+          },
+          title: {
+            display: false,
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: "#a9bad3", maxTicksLimit: 8 },
+            grid: { color: "rgba(255,255,255,0.08)" },
+          },
+          y: {
+            ticks: { color: "#a9bad3" },
+            grid: { color: "rgba(255,255,255,0.1)" },
+            title: { display: true, text: "Temperature (°C)", color: "#c9d4e5" },
+          },
+        },
+      },
+    });
   }
 
   function renderRackCards(summary) {
@@ -545,6 +623,10 @@
       modalHealthPieChart.destroy();
       modalHealthPieChart = null;
     }
+    if (azRacksTempChart) {
+      azRacksTempChart.destroy();
+      azRacksTempChart = null;
+    }
 
     for (const st of SENSOR_ORDER) {
       try {
@@ -617,6 +699,7 @@
         latestByType
       )}</tbody></table></section>` +
       `<section class="modal-section"><h4>Trend summary</h4><table class="modal-table"><thead><tr><th>Sensor</th><th>Trend</th></tr></thead><tbody>${trendRows}</tbody></table></section>` +
+      `<section class="modal-section"><h4>Racks inside this AZ</h4><div id="az-racks-area"><p class="modal-loading">Loading rack-level details…</p></div></section>` +
       "<section class='modal-section'><h4>Recommended actions</h4><ul class='modal-list'><li>If rack temperature is rising while airflow is falling, inspect cooling fan paths.</li><li>If humidity is low and static risk is flagged, increase humidity control in this zone.</li><li>If rack temperature keeps climbing on the chart, check cooling and workload.</li></ul></section>";
 
     const pieCanvas = rackModalBody.querySelector("#modal-health-pie");
@@ -629,6 +712,74 @@
       if (canvas && ser) {
         drawLineChart(canvas, ser.labels, ser.values, st);
         if (meta) meta.textContent = ser.metaText;
+      }
+    }
+
+    const azArea = rackModalBody.querySelector("#az-racks-area");
+    if (azArea) {
+      try {
+        const azData = await fetchJson(
+          `/api/az-racks?az_id=${encodeURIComponent(rackId)}&region=${encodeURIComponent(SELECTED_REGION)}`
+        );
+        const azRacks = Array.isArray(azData.racks) ? azData.racks : [];
+        const rows = azRacks
+          .map((r) => {
+            const latest = r.latest || {};
+            return `<tr>
+              <td>${r.label || r.rack_id}</td>
+              <td>${metricCell(latest, "rack_temperature")}</td>
+              <td>${metricCell(latest, "room_temperature")}</td>
+              <td>${metricCell(latest, "humidity")}</td>
+              <td>${metricCell(latest, "airflow")}</td>
+            </tr>`;
+          })
+          .join("");
+        azArea.innerHTML =
+          `<table class="modal-table"><thead><tr><th>Rack</th><th>Rack Temp</th><th>Room Temp</th><th>Humidity</th><th>Airflow</th></tr></thead><tbody>${rows}</tbody></table>` +
+          `<div class="modal-chart-box modal-chart-box--primary"><h5>Rack temperature trend by rack</h5><canvas id="az-racks-temp-chart" width="720" height="220"></canvas></div>`;
+
+        if (hasChartJs) {
+          const chartCanvas = rackModalBody.querySelector("#az-racks-temp-chart");
+          if (chartCanvas) {
+            const palette = ["#3ea6ff", "#3ddc97", "#f5a623", "#e85d5d", "#b18cff"];
+            let labels = [];
+            const datasets = azRacks.map((rack, idx) => {
+              const points = Array.isArray(rack.rack_temperature_series) ? rack.rack_temperature_series : [];
+              const vals = points.map((p) => Number(p.value)).filter((v) => Number.isFinite(v));
+              const labs = points.map((p) => String(p.timestamp || "").slice(11, 19));
+              if (!labels.length) labels = labs;
+              return {
+                label: rack.label || rack.rack_id,
+                data: vals,
+                borderColor: palette[idx % palette.length],
+                backgroundColor: "transparent",
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.25,
+              };
+            });
+            azRacksTempChart = new window.Chart(chartCanvas, {
+              type: "line",
+              data: {
+                labels,
+                datasets,
+              },
+              options: {
+                responsive: false,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { labels: { color: "#c9d4e5", boxWidth: 10 } },
+                },
+                scales: {
+                  x: { ticks: { color: "#8b9bb4", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.08)" } },
+                  y: { ticks: { color: "#8b9bb4" }, grid: { color: "rgba(255,255,255,0.1)" } },
+                },
+              },
+            });
+          }
+        }
+      } catch (_) {
+        azArea.innerHTML = "<p class='modal-loading'>Unable to load rack-level AZ details.</p>";
       }
     }
   }
@@ -716,6 +867,7 @@
     updateOverheatDurations(data);
     renderOverview(data);
     renderRackCards(data);
+    await renderRegionalRacksChart();
     if (data.errors && data.errors.length) {
       setStatus("Data issue: " + data.errors[0], false);
     } else {

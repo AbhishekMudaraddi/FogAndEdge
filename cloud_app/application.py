@@ -90,6 +90,14 @@ def racks_for_region(region: str) -> list[str]:
     return REGION_AZ_RACKS.get(region, RACK_IDS)
 
 
+def racks_for_az(az_id: str) -> list[str]:
+    return [f"{az_id}-r1", f"{az_id}-r2", f"{az_id}-r3"]
+
+
+def is_az_scope(scope_id: str) -> bool:
+    return "-az" in scope_id and "-r" not in scope_id
+
+
 def normalize_rack_id(raw: str | None, region: str) -> str:
     allowed = racks_for_region(region)
     if raw and raw.strip():
@@ -140,7 +148,73 @@ def query_sensor(rack: str, sensor_type: str, limit: int) -> list[dict[str, Any]
     return items[:limit]
 
 
+def aggregate_latest_for_az(az_id: str) -> tuple[dict[str, Any], list[str]]:
+    out: dict[str, Any] = {}
+    errors: list[str] = []
+    rack_ids = racks_for_az(az_id)
+    for st in VALID_SENSORS:
+        values: list[float] = []
+        items: list[dict[str, Any]] = []
+        for rid in rack_ids:
+            try:
+                rows = query_sensor(rid, st, 1)
+                if rows:
+                    items.append(rows[0])
+                    if "value" in rows[0]:
+                        values.append(float(rows[0]["value"]))
+            except Exception as e:
+                errors.append(f"{rid}/{st}: {e}")
+        if not items:
+            out[st] = None
+            continue
+        base = dict(items[0])
+        if values:
+            base["value"] = round(sum(values) / len(values), 2)
+        base["rack_id"] = az_id
+        base["az_id"] = az_id
+        base["rack_count"] = len(items)
+        base["overheating"] = any(bool(i.get("overheating")) for i in items)
+        base["cooling_failure"] = any(bool(i.get("cooling_failure")) for i in items)
+        base["static_risk"] = any(bool(i.get("static_risk")) for i in items)
+        ce_vals = [float(i["cooling_efficiency"]) for i in items if i.get("cooling_efficiency") is not None]
+        if ce_vals:
+            base["cooling_efficiency"] = round(sum(ce_vals) / len(ce_vals), 6)
+        out[st] = base
+    return out, errors
+
+
+def aggregate_sensor_series_for_az(az_id: str, sensor_type: str, limit: int) -> list[dict[str, Any]]:
+    rack_ids = racks_for_az(az_id)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for rid in rack_ids:
+        rows = query_sensor(rid, sensor_type, limit)
+        for row in rows:
+            ts = str(row.get("timestamp") or "")
+            if not ts:
+                continue
+            grouped.setdefault(ts, []).append(row)
+    timestamps = sorted(grouped.keys(), reverse=True)[:limit]
+    out: list[dict[str, Any]] = []
+    for ts in timestamps:
+        rows = grouped[ts]
+        vals = [float(r["value"]) for r in rows if "value" in r]
+        if not vals:
+            continue
+        base = dict(rows[0])
+        base["value"] = round(sum(vals) / len(vals), 2)
+        base["rack_id"] = az_id
+        base["az_id"] = az_id
+        base["rack_count"] = len(rows)
+        base["overheating"] = any(bool(i.get("overheating")) for i in rows)
+        base["cooling_failure"] = any(bool(i.get("cooling_failure")) for i in rows)
+        base["static_risk"] = any(bool(i.get("static_risk")) for i in rows)
+        out.append(decimal_to_native(base))
+    return out
+
+
 def get_latest_for_rack(rack_id: str) -> tuple[dict[str, Any], list[str]]:
+    if is_az_scope(rack_id):
+        return aggregate_latest_for_az(rack_id)
     out: dict[str, Any] = {}
     errors: list[str] = []
     for st in VALID_SENSORS:
@@ -230,7 +304,10 @@ def api_sensors(sensor_type: str):
     rack_id = normalize_rack_id(request.args.get("rack_id"), region)
     n = min(max(request.args.get("n", default=50, type=int) or 50, 1), 500)
     try:
-        items = query_sensor(rack_id, sensor_type, n)
+        if is_az_scope(rack_id):
+            items = aggregate_sensor_series_for_az(rack_id, sensor_type, n)
+        else:
+            items = query_sensor(rack_id, sensor_type, n)
     except Exception as e:
         logger.exception("Query failed")
         return jsonify({"error": str(e)}), 500
@@ -276,6 +353,30 @@ def api_all_sensors():
     if errors:
         body["errors"] = errors
     return jsonify(decimal_to_native(body))
+
+
+@application.get("/api/az-racks")
+def api_az_racks():
+    region = normalize_region(request.args.get("region"))
+    az_id = request.args.get("az_id", type=str) or ""
+    if not az_id or not is_az_scope(az_id):
+        return jsonify({"error": "az_id is required and must look like <prefix>-az<n>"}), 400
+    if az_id not in racks_for_region(region):
+        return jsonify({"error": "az_id is not part of selected region"}), 400
+    racks: list[dict[str, Any]] = []
+    for rid in racks_for_az(az_id):
+        latest, _ = get_latest_for_rack(rid)
+        temp_series = query_sensor(rid, "rack_temperature", 35)
+        temp_series = list(reversed(temp_series))
+        racks.append(
+            {
+                "rack_id": rid,
+                "label": rack_label(rid),
+                "latest": latest,
+                "rack_temperature_series": temp_series,
+            }
+        )
+    return jsonify({"region": region, "az_id": az_id, "racks": decimal_to_native(racks)})
 
 
 @application.get("/health")

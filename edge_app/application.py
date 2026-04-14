@@ -55,7 +55,12 @@ SENSOR_FREQUENCY = _env_float("SENSOR_FREQUENCY", 30.0)
 DISPATCH_RATE = max(1, _env_int("DISPATCH_RATE", 1))
 RACK_IDS_RAW = os.environ.get(
     "RACK_IDS",
-    "ew1-az1,ew1-az2,ew1-az3,ue1-az1,ue1-az2,ue1-az3,ue2-az1,ue2-az2,ue2-az3,as1-az1,as1-az2,as1-az3,ase1-az1,ase1-az2,ase1-az3,an1-az1,an1-az2,an1-az3",
+    "ew1-az1-r1,ew1-az1-r2,ew1-az1-r3,ew1-az2-r1,ew1-az2-r2,ew1-az2-r3,ew1-az3-r1,ew1-az3-r2,ew1-az3-r3,"
+    "ue1-az1-r1,ue1-az1-r2,ue1-az1-r3,ue1-az2-r1,ue1-az2-r2,ue1-az2-r3,ue1-az3-r1,ue1-az3-r2,ue1-az3-r3,"
+    "ue2-az1-r1,ue2-az1-r2,ue2-az1-r3,ue2-az2-r1,ue2-az2-r2,ue2-az2-r3,ue2-az3-r1,ue2-az3-r2,ue2-az3-r3,"
+    "as1-az1-r1,as1-az1-r2,as1-az1-r3,as1-az2-r1,as1-az2-r2,as1-az2-r3,as1-az3-r1,as1-az3-r2,as1-az3-r3,"
+    "ase1-az1-r1,ase1-az1-r2,ase1-az1-r3,ase1-az2-r1,ase1-az2-r2,ase1-az2-r3,ase1-az3-r1,ase1-az3-r2,ase1-az3-r3,"
+    "an1-az1-r1,an1-az1-r2,an1-az1-r3,an1-az2-r1,an1-az2-r2,an1-az2-r3,an1-az3-r1,an1-az3-r2,an1-az3-r3",
 )
 RACK_IDS = tuple(x.strip() for x in RACK_IDS_RAW.split(",") if x.strip())
 if not RACK_IDS:
@@ -106,6 +111,13 @@ def _region_from_rack_id(rack_id: str) -> str:
     return _RACK_REGION_BY_PREFIX.get(prefix, AWS_REGION)
 
 
+def _az_from_rack_id(rack_id: str) -> str:
+    parts = rack_id.split("-")
+    if len(parts) >= 3 and parts[1].startswith("az"):
+        return "-".join(parts[:2])
+    return rack_id
+
+
 def build_reading_batch() -> list[dict[str, Any]]:
     """One batch: 5 readings per rack, shared ISO timestamp (UTC)."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -119,6 +131,7 @@ def build_reading_batch() -> list[dict[str, Any]]:
                     "unit": UNITS[st],
                     "timestamp": ts,
                     "rack_id": rack_id,
+                    "az_id": _az_from_rack_id(rack_id),
                     "datacenter_id": DATACENTER_ID,
                     "region": _region_from_rack_id(rack_id),
                 }
