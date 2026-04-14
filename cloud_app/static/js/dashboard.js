@@ -217,7 +217,7 @@
         ],
       },
       options: {
-        responsive: true,
+        responsive: false,
         maintainAspectRatio: false,
         cutout: "55%",
         plugins: {
@@ -314,7 +314,7 @@
         datasets,
       },
       options: {
-        responsive: true,
+        responsive: false,
         maintainAspectRatio: false,
         plugins: {
           legend: {
@@ -502,7 +502,7 @@
         datasets,
       },
       options: {
-        responsive: true,
+        responsive: false,
         maintainAspectRatio: false,
         plugins: {
           legend: { display: isHot, labels: { color: "#c9d4e5", boxWidth: 10 } },
@@ -544,7 +544,7 @@
         ],
       },
       options: {
-        responsive: true,
+        responsive: false,
         maintainAspectRatio: false,
         cutout: "52%",
         plugins: {
@@ -725,7 +725,7 @@
               datasets,
             },
             options: {
-              responsive: true,
+              responsive: false,
               maintainAspectRatio: false,
               plugins: {
                 legend: { labels: { color: "#c9d4e5", boxWidth: 10 } },
@@ -778,7 +778,7 @@
               ],
             },
             options: {
-              responsive: true,
+              responsive: false,
               maintainAspectRatio: false,
               plugins: { legend: { display: false } },
               scales: {
