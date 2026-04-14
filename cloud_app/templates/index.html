@@ -37,6 +37,10 @@
         font-size: 13px;
       }
 
+      .cesium-widget-credits {
+        display: none !important;
+      }
+
       .top-nav {
         position: absolute;
         top: 14px;
@@ -341,7 +345,6 @@
       <button type="button" class="nav-btn" data-view="overview-view">AZs Overview</button>
       <button type="button" class="nav-btn" data-view="compare-view">Compare</button>
     </nav>
-    <div class="hint-overlay">Drag to rotate · Scroll to zoom · Click region marker to open dashboard</div>
     <section id="home-view" class="page-view">
     <aside class="region-panel" aria-label="Region controls">
       <h3>Select availability zone region</h3>
@@ -525,7 +528,6 @@
         "overview-view": document.getElementById("overview-view"),
         "compare-view": document.getElementById("compare-view"),
       };
-      const hintOverlay = document.querySelector(".hint-overlay");
       const regionByCode = {};
       const entityByCode = {};
       let focusedRegionCode = null;
@@ -850,7 +852,6 @@
         navButtons.forEach((btn) => {
           btn.classList.toggle("active", btn.dataset.view === viewId);
         });
-        if (hintOverlay) hintOverlay.style.display = viewId === "home-view" ? "block" : "none";
         if (viewId === "overview-view" || viewId === "compare-view") {
           loadOverviewAndCompare();
         }
