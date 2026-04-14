@@ -71,9 +71,41 @@
         color: #ffffff;
       }
 
+      .critical-feed {
+        position: absolute;
+        top: 66px;
+        right: 16px;
+        z-index: 1190;
+        width: min(420px, calc(100vw - 32px));
+        display: grid;
+        gap: 8px;
+      }
+
+      .critical-note {
+        background: rgba(232, 93, 93, 0.16);
+        border: 1px solid rgba(232, 93, 93, 0.6);
+        border-left: 4px solid #e85d5d;
+        color: #ffd7d7;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .critical-note strong {
+        color: #fff1f1;
+      }
+
+      .critical-note.empty {
+        background: rgba(61, 220, 151, 0.1);
+        border-color: rgba(61, 220, 151, 0.45);
+        border-left-color: #3ddc97;
+        color: #d8ffe9;
+      }
+
       .region-panel {
         position: absolute;
-        top: 78px;
+        top: 140px;
         left: 16px;
         z-index: 1000;
         width: 280px;
@@ -352,6 +384,11 @@
           font-size: 14px;
           padding: 8px 10px;
         }
+
+        .critical-feed {
+          top: 62px;
+          right: 12px;
+        }
       }
 
       @media (max-width: 768px) {
@@ -372,7 +409,7 @@
         .region-panel {
           width: calc(100vw - 20px);
           left: 10px;
-          top: 70px;
+          top: 176px;
           padding: 10px;
         }
 
@@ -384,6 +421,13 @@
 
         .data-view {
           padding: 88px 10px 14px;
+        }
+
+        .critical-feed {
+          left: 10px;
+          right: 10px;
+          width: auto;
+          top: 124px;
         }
 
         .overview-toolbar {
@@ -426,6 +470,7 @@
       <button type="button" class="nav-btn" data-view="overview-view">AZs Overview</button>
       <button type="button" class="nav-btn" data-view="compare-view">Compare</button>
     </nav>
+    <section id="critical-feed" class="critical-feed" aria-live="polite"></section>
     <section id="home-view" class="page-view">
     <aside class="region-panel" aria-label="Region controls">
       <h3>Select availability zone region</h3>
@@ -438,7 +483,7 @@
     <section id="overview-view" class="page-view data-view hidden" aria-label="AZs overview">
       <div class="data-wrap">
         <h2>AZs Overview</h2>
-        <p>Live summary across configured dashboard regions and their availability zones.</p>
+        <p>Overall summary of the AZs that are monitored.</p>
         <div class="overview-toolbar">
           <div id="overview-meta" class="overview-meta">Waiting for live data…</div>
           <button id="overview-refresh" class="overview-refresh-btn" type="button">Refresh now</button>
@@ -452,12 +497,18 @@
             </div>
           </article>
           <article class="chart-card">
-            <h4>Risk AZ distribution</h4>
+            <h4>Overall rack state distribution</h4>
             <div class="chart-wrap">
               <canvas id="overview-risk-chart"></canvas>
             </div>
           </article>
         </div>
+        <article class="chart-card">
+          <h4>Region comparison</h4>
+          <div class="chart-wrap">
+            <canvas id="overview-compare-chart"></canvas>
+          </div>
+        </article>
         <div class="table-wrap">
           <table>
             <thead>
@@ -466,7 +517,6 @@
                 <th>AZ count</th>
                 <th>Avg rack temp (°C)</th>
                 <th>Risk AZs</th>
-                <th>Hottest AZ</th>
               </tr>
             </thead>
             <tbody id="overview-table-body"></tbody>
@@ -657,14 +707,19 @@
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
       const compareTableBody = document.getElementById("compare-table-body");
+      const criticalFeed = document.getElementById("critical-feed");
       const overviewTempChartCanvas = document.getElementById("overview-temp-chart");
       const overviewRiskChartCanvas = document.getElementById("overview-risk-chart");
+      const overviewCompareChartCanvas = document.getElementById("overview-compare-chart");
       const overviewMeta = document.getElementById("overview-meta");
       const overviewRefreshBtn = document.getElementById("overview-refresh");
       let overviewTempChart = null;
       let overviewRiskChart = null;
+      let overviewCompareChart = null;
       let currentViewId = "home-view";
       let dataRefreshInFlight = false;
+      const OVERVIEW_REFRESH_SEC = 30;
+      let overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
       if (select) {
         const placeholder = document.createElement("option");
         placeholder.value = "";
@@ -725,13 +780,50 @@
         return res.json();
       }
 
+      async function refreshCriticalFeed() {
+        if (!criticalFeed) return;
+        const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
+        const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
+        const criticals = [];
+        settled.forEach((result, idx) => {
+          if (result.status !== "fulfilled") return;
+          const code = regionCodes[idx];
+          const payload = result.value || {};
+          const rows = Array.isArray(payload.racks) ? payload.racks : [];
+          rows.forEach((row) => {
+            const tempRow = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
+            const temp = tempRow ? Number(tempRow.value) : NaN;
+            if (!Number.isFinite(temp) || temp < 40) return;
+            criticals.push({
+              region: code,
+              az: row.label || row.rack_id || "Unknown AZ",
+              temp,
+            });
+          });
+        });
+        criticals.sort((a, b) => b.temp - a.temp);
+        const top = criticals.slice(0, 3);
+        if (!top.length) {
+          criticalFeed.innerHTML = `<article class="critical-note empty"><strong>No critical AZ alerts</strong> — all monitored AZs are below the critical threshold.</article>`;
+          return;
+        }
+        criticalFeed.innerHTML = top
+          .map(
+            (x) =>
+              `<article class="critical-note"><strong>Critical:</strong> ${x.region} · ${x.az} at ${x.temp.toFixed(
+                2
+              )}°C</article>`
+          )
+          .join("");
+      }
+
       function statusFromTemp(temp) {
         if (temp >= 40) return "Critical";
         if (temp >= 35) return "Warning";
         return "Normal";
       }
 
-      function renderOverviewCharts(summaryRows) {
+      function renderOverviewCharts(summaryRows, totals) {
         if (!window.Chart || !overviewTempChartCanvas || !overviewRiskChartCanvas) return;
 
         const labels = summaryRows.map((r) => r.regionCode);
@@ -739,12 +831,13 @@
           const n = Number(r.avgTemp);
           return Number.isFinite(n) ? Number(n.toFixed(2)) : null;
         });
-        const totalRisk = summaryRows.reduce((acc, r) => acc + (Number(r.riskCount) || 0), 0);
-        const totalAzs = summaryRows.reduce((acc, r) => acc + (Number(r.azCount) || 0), 0);
-        const healthyAzs = Math.max(0, totalAzs - totalRisk);
+        const totalCriticalRacks = Number(totals.criticalRacks || 0);
+        const totalRacks = Number(totals.totalRacks || 0);
+        const goodRacks = Math.max(0, totalRacks - totalCriticalRacks);
 
         if (overviewTempChart) overviewTempChart.destroy();
         if (overviewRiskChart) overviewRiskChart.destroy();
+        if (overviewCompareChart) overviewCompareChart.destroy();
 
         overviewTempChart = new Chart(overviewTempChartCanvas, {
           type: "bar",
@@ -777,13 +870,13 @@
         overviewRiskChart = new Chart(overviewRiskChartCanvas, {
           type: "doughnut",
           data: {
-            labels: ["Risk AZs", "Healthy AZs"],
+            labels: ["Good racks", "Critical racks"],
             datasets: [
               {
-                data: [totalRisk, healthyAzs],
+                data: [goodRacks, totalCriticalRacks],
                 backgroundColor: [
-                  "rgba(232, 93, 93, 0.85)",
                   "rgba(61, 220, 151, 0.8)",
+                  "rgba(232, 93, 93, 0.85)",
                 ],
                 borderWidth: 1,
               },
@@ -800,6 +893,57 @@
             },
           },
         });
+
+        if (overviewCompareChartCanvas) {
+          const riskAzByRegion = summaryRows.map((r) => Number(r.riskCount) || 0);
+          overviewCompareChart = new Chart(overviewCompareChartCanvas, {
+            type: "bar",
+            data: {
+              labels,
+              datasets: [
+                {
+                  label: "Avg Rack Temp (°C)",
+                  data: avgTemps,
+                  backgroundColor: "rgba(62,166,255,0.55)",
+                  borderColor: "rgba(62,166,255,1)",
+                  borderWidth: 1,
+                  yAxisID: "y",
+                },
+                {
+                  label: "Risk AZs",
+                  data: riskAzByRegion,
+                  backgroundColor: "rgba(232,93,93,0.55)",
+                  borderColor: "rgba(232,93,93,1)",
+                  borderWidth: 1,
+                  yAxisID: "y1",
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { labels: { color: "#dfeaff" } },
+              },
+              scales: {
+                x: { ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.06)" } },
+                y: { position: "left", ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.08)" } },
+                y1: {
+                  position: "right",
+                  ticks: { color: "#ffb3b3", precision: 0 },
+                  grid: { drawOnChartArea: false },
+                  beginAtZero: true,
+                },
+              },
+            },
+          });
+        }
+      }
+
+      function updateOverviewMetaLine(lastUpdatedText) {
+        if (!overviewMeta) return;
+        const last = lastUpdatedText || "—";
+        overviewMeta.textContent = `Last updated: ${last} · next refresh in ${Math.max(0, overviewRefreshCountdown)}s`;
       }
 
       async function loadOverviewAndCompare() {
@@ -867,7 +1011,17 @@
             azCount: racksData.length,
             avgTemp: tempCount ? (sumTemp / tempCount).toFixed(2) : "—",
             riskCount,
-            hottest: hottest.temp > -Infinity ? `${hottest.label} (${hottest.temp.toFixed(2)}°C)` : "—",
+              hottest: hottest.temp > -Infinity ? `${hottest.label} (${hottest.temp.toFixed(2)}°C)` : "—",
+              totalRacksInRegion: racksData.reduce((acc, row) => {
+                const rt = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
+                const rc = rt && rt.rack_count != null ? Number(rt.rack_count) : 1;
+                return acc + (Number.isFinite(rc) ? rc : 0);
+              }, 0),
+              criticalRacksInRegion: racksData.reduce((acc, row) => {
+                const rt = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
+                const cc = rt && rt.rack_critical_count != null ? Number(rt.rack_critical_count) : 0;
+                return acc + (Number.isFinite(cc) ? cc : 0);
+              }, 0),
           });
         });
 
@@ -875,27 +1029,29 @@
           const totals = {
             regions: summaryRows.length,
             azs: summaryRows.reduce((a, b) => a + (Number(b.azCount) || 0), 0),
-            risks: summaryRows.reduce((a, b) => a + (Number(b.riskCount) || 0), 0),
+              risks: summaryRows.reduce((a, b) => a + (Number(b.riskCount) || 0), 0),
+              totalRacks: summaryRows.reduce((a, b) => a + (Number(b.totalRacksInRegion) || 0), 0),
+              criticalRacks: summaryRows.reduce((a, b) => a + (Number(b.criticalRacksInRegion) || 0), 0),
           };
           const avgList = summaryRows.map((x) => Number(x.avgTemp)).filter((n) => Number.isFinite(n));
           const fleetAvg = avgList.length ? (avgList.reduce((a, b) => a + b, 0) / avgList.length).toFixed(2) : "—";
           overviewGrid.innerHTML =
-            `<article class="overview-card"><h4>Total Regions</h4><div class="metric">${totals.regions}</div><div class="submetric">Dashboard-enabled regions</div></article>` +
+              `<article class="overview-card"><h4>Total regions monitored</h4><div class="metric">${totals.regions}</div><div class="submetric">Dashboard-enabled regions</div></article>` +
             `<article class="overview-card"><h4>Total AZs</h4><div class="metric">${totals.azs}</div><div class="submetric">Across selected regions</div></article>` +
-            `<article class="overview-card"><h4>Fleet Avg Temp</h4><div class="metric">${fleetAvg}</div><div class="submetric">Rack temperature (°C)</div></article>` +
-            `<article class="overview-card"><h4>Risk AZs</h4><div class="metric">${totals.risks}</div><div class="submetric">Any fog risk flag active</div></article>`;
+              `<article class="overview-card"><h4>Total racks</h4><div class="metric">${totals.totalRacks}</div><div class="submetric">All racks under monitored AZs</div></article>` +
+              `<article class="overview-card"><h4>Total racks in critical state</h4><div class="metric">${totals.criticalRacks}</div><div class="submetric">Rack temp >= 40°C</div></article>`;
+
+            renderOverviewCharts(summaryRows, totals);
         }
 
           if (overviewTableBody) {
           overviewTableBody.innerHTML = summaryRows
             .map(
               (r) =>
-                `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.hottest}</td></tr>`
+                  `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td></tr>`
             )
             .join("");
         }
-
-          renderOverviewCharts(summaryRows);
 
           if (compareTableBody) {
           compareRows.sort((a, b) => {
@@ -914,9 +1070,8 @@
             .join("");
         }
 
-          if (overviewMeta) {
-            overviewMeta.textContent = `Last updated: ${new Date().toLocaleTimeString()} · Regions: ${summaryRows.length}`;
-          }
+          overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
+          updateOverviewMetaLine(new Date().toLocaleTimeString());
         } catch (err) {
           if (overviewMeta) overviewMeta.textContent = "Refresh failed. Check API/data pipeline.";
         } finally {
@@ -1037,10 +1192,19 @@
       });
 
       activateView("home-view");
+      refreshCriticalFeed();
+      setInterval(() => {
+        if (currentViewId === "overview-view" || currentViewId === "compare-view") {
+          overviewRefreshCountdown -= 1;
+          if (overviewRefreshCountdown < 0) overviewRefreshCountdown = 0;
+          updateOverviewMetaLine();
+        }
+      }, 1000);
       setInterval(() => {
         if (currentViewId === "overview-view" || currentViewId === "compare-view") {
           loadOverviewAndCompare();
         }
+        refreshCriticalFeed();
       }, 30000);
     </script>
   </body>
