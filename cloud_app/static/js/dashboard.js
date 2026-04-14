@@ -10,6 +10,7 @@
   }
   const cfg = readAppConfig();
   const POLL_MS = cfg.pollIntervalMs || 30000;
+  const SELECTED_REGION = cfg.selectedRegion || "";
   const REFRESH_SEC = Math.max(1, Math.round(POLL_MS / 1000));
   const SENSOR_ORDER = [
     "rack_temperature",
@@ -566,7 +567,9 @@
     for (const st of SENSOR_ORDER) {
       try {
         const data = await fetchJson(
-          `/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=${MODAL_POINTS}`
+          `/api/sensors/${encodeURIComponent(st)}?rack_id=${encodeURIComponent(rackId)}&n=${MODAL_POINTS}&region=${encodeURIComponent(
+            SELECTED_REGION
+          )}`
         );
         const readings = (data.readings || []).slice().reverse();
         const labels = readings.map((r) => (r.timestamp || "").slice(11, 19));
@@ -727,7 +730,7 @@
   }
 
   async function refreshSummary() {
-    const data = await fetchJson("/api/racks-summary");
+    const data = await fetchJson(`/api/racks-summary?region=${encodeURIComponent(SELECTED_REGION)}`);
     updateOverheatDurations(data);
     renderOverview(data);
     renderRackCards(data);

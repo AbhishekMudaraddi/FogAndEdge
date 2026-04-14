@@ -53,7 +53,10 @@ def _env_int(name: str, default: int) -> int:
 
 SENSOR_FREQUENCY = _env_float("SENSOR_FREQUENCY", 30.0)
 DISPATCH_RATE = max(1, _env_int("DISPATCH_RATE", 1))
-RACK_IDS_RAW = os.environ.get("RACK_IDS", "rack_01,rack_02,rack_03")
+RACK_IDS_RAW = os.environ.get(
+    "RACK_IDS",
+    "ew1-az1,ew1-az2,ew1-az3,ue1-az1,ue1-az2,ue1-az3,ue2-az1,ue2-az2,ue2-az3,as1-az1,as1-az2,as1-az3,ase1-az1,ase1-az2,ase1-az3,an1-az1,an1-az2,an1-az3",
+)
 RACK_IDS = tuple(x.strip() for x in RACK_IDS_RAW.split(",") if x.strip())
 if not RACK_IDS:
     RACK_IDS = ("rack_01", "rack_02", "rack_03")
@@ -66,6 +69,15 @@ _sqs = None
 _cycle_count = 0
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
+
+_RACK_REGION_BY_PREFIX = {
+    "ew1": "eu-west-1",
+    "ue1": "us-east-1",
+    "ue2": "us-east-2",
+    "as1": "ap-south-1",
+    "ase1": "ap-southeast-1",
+    "an1": "ap-northeast-1",
+}
 
 
 def get_sqs_client():
@@ -89,6 +101,11 @@ def _random_value(sensor_type: str) -> float:
     return 0.0
 
 
+def _region_from_rack_id(rack_id: str) -> str:
+    prefix = rack_id.split("-", 1)[0].lower()
+    return _RACK_REGION_BY_PREFIX.get(prefix, AWS_REGION)
+
+
 def build_reading_batch() -> list[dict[str, Any]]:
     """One batch: 5 readings per rack, shared ISO timestamp (UTC)."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -103,6 +120,7 @@ def build_reading_batch() -> list[dict[str, Any]]:
                     "timestamp": ts,
                     "rack_id": rack_id,
                     "datacenter_id": DATACENTER_ID,
+                    "region": _region_from_rack_id(rack_id),
                 }
             )
     return batch

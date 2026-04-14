@@ -10,7 +10,7 @@
     <header class="header">
       <h1 class="site-title">Data Center Thermal monitor</h1>
       <p class="sub">
-        3 racks · 5 sensors each · next refresh in <span id="refresh-countdown" class="refresh-countdown">—</span>s
+        Region {{ selected_region }} · {{ rack_ids | length }} AZs · 5 sensors each · next refresh in <span id="refresh-countdown" class="refresh-countdown">—</span>s
       </p>
       <p class="status" id="status-line">Connecting…</p>
     </header>
@@ -32,7 +32,7 @@
     </main>
 
     <script type="application/json" id="app-config">
-      {{ {"defaultRackId": rack_id, "rackIds": rack_ids, "pollIntervalMs": poll_interval_ms | int} | tojson }}
+      {{ {"defaultRackId": rack_id, "rackIds": rack_ids, "pollIntervalMs": poll_interval_ms | int, "selectedRegion": selected_region} | tojson }}
     </script>
     <div id="rack-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rack-modal-title">
       <div class="modal-backdrop" data-close-modal="1"></div>
