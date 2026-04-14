@@ -40,11 +40,11 @@
       .top-nav {
         position: absolute;
         top: 14px;
-        left: 16px;
+        right: 16px;
         z-index: 1200;
         display: flex;
         gap: 8px;
-        background: rgba(10, 16, 28, 0.42);
+        background: rgba(10, 16, 28, 0.2);
         border: 1px solid rgba(255, 255, 255, 0.18);
         border-radius: 10px;
         padding: 6px;
@@ -54,10 +54,11 @@
       .top-nav button {
         border: 0;
         border-radius: 8px;
-        padding: 8px 12px;
+        padding: 10px 14px;
         background: transparent;
         color: #dbe8ff;
         font-weight: 600;
+        font-size: 16px;
         cursor: pointer;
       }
 
@@ -205,6 +206,14 @@
         color: #e8f0ff;
       }
 
+      #overview-view.data-view {
+        background: #05070c;
+      }
+
+      #overview-view .data-wrap p {
+        color: #9fb1cf;
+      }
+
       .data-wrap {
         max-width: 1200px;
         margin: 0 auto;
@@ -227,8 +236,8 @@
       }
 
       .overview-card {
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 10px;
         padding: 12px;
       }
@@ -251,7 +260,7 @@
       }
 
       .table-wrap {
-        background: rgba(255, 255, 255, 0.04);
+        background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: 10px;
         overflow: hidden;
@@ -272,6 +281,30 @@
 
       .table-wrap th {
         background: rgba(255, 255, 255, 0.07);
+      }
+
+      .charts-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 12px;
+        margin: 0 0 16px;
+      }
+
+      .chart-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 12px;
+      }
+
+      .chart-card h4 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: #d9e6ff;
+      }
+
+      .chart-wrap {
+        height: 260px;
       }
     </style>
   </head>
@@ -296,6 +329,20 @@
         <h2>AZs Overview</h2>
         <p>Live summary across configured dashboard regions and their availability zones.</p>
         <div id="overview-grid" class="overview-grid"></div>
+        <div class="charts-grid">
+          <article class="chart-card">
+            <h4>Average rack temperature by region</h4>
+            <div class="chart-wrap">
+              <canvas id="overview-temp-chart"></canvas>
+            </div>
+          </article>
+          <article class="chart-card">
+            <h4>Risk AZ distribution</h4>
+            <div class="chart-wrap">
+              <canvas id="overview-risk-chart"></canvas>
+            </div>
+          </article>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -352,6 +399,7 @@
       src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"
       crossorigin=""
     ></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script>
       function readConfig() {
         const el = document.getElementById("map-config");
@@ -495,6 +543,10 @@
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
       const compareTableBody = document.getElementById("compare-table-body");
+      const overviewTempChartCanvas = document.getElementById("overview-temp-chart");
+      const overviewRiskChartCanvas = document.getElementById("overview-risk-chart");
+      let overviewTempChart = null;
+      let overviewRiskChart = null;
       let overviewLoaded = false;
       let compareLoaded = false;
       if (select) {
@@ -563,6 +615,79 @@
         return "Normal";
       }
 
+      function renderOverviewCharts(summaryRows) {
+        if (!window.Chart || !overviewTempChartCanvas || !overviewRiskChartCanvas) return;
+
+        const labels = summaryRows.map((r) => r.regionCode);
+        const avgTemps = summaryRows.map((r) => {
+          const n = Number(r.avgTemp);
+          return Number.isFinite(n) ? Number(n.toFixed(2)) : null;
+        });
+        const riskCounts = summaryRows.map((r) => Number(r.riskCount) || 0);
+
+        if (overviewTempChart) overviewTempChart.destroy();
+        if (overviewRiskChart) overviewRiskChart.destroy();
+
+        overviewTempChart = new Chart(overviewTempChartCanvas, {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Avg Rack Temp (°C)",
+                data: avgTemps,
+                backgroundColor: "rgba(62,166,255,0.65)",
+                borderColor: "rgba(62,166,255,1)",
+                borderWidth: 1.2,
+                borderRadius: 8,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: "#dfeaff" } },
+            },
+            scales: {
+              x: { ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.06)" } },
+              y: { ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.08)" } },
+            },
+          },
+        });
+
+        overviewRiskChart = new Chart(overviewRiskChartCanvas, {
+          type: "doughnut",
+          data: {
+            labels,
+            datasets: [
+              {
+                data: riskCounts,
+                backgroundColor: [
+                  "rgba(255, 99, 132, 0.8)",
+                  "rgba(255, 159, 64, 0.8)",
+                  "rgba(255, 205, 86, 0.8)",
+                  "rgba(75, 192, 192, 0.8)",
+                  "rgba(54, 162, 235, 0.8)",
+                  "rgba(153, 102, 255, 0.8)",
+                ],
+                borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: "bottom",
+                labels: { color: "#dfeaff", boxWidth: 12 },
+              },
+            },
+          },
+        });
+      }
+
       async function loadOverviewAndCompare() {
         const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
         const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
@@ -575,10 +700,12 @@
           const region = regionByCode[code];
           if (result.status !== "fulfilled") {
             summaryRows.push({
-              region: code,
+              regionCode: code,
+              regionName: region ? region.name : "Unknown",
+              regionLabel: `${code} (${region ? region.name : "Unknown"})`,
               azCount: 0,
               avgTemp: "—",
-              riskCount: "—",
+              riskCount: 0,
               hottest: "No data",
             });
             return;
@@ -616,7 +743,9 @@
           });
 
           summaryRows.push({
-            region: `${code} (${region ? region.name : "Unknown"})`,
+            regionCode: code,
+            regionName: region ? region.name : "Unknown",
+            regionLabel: `${code} (${region ? region.name : "Unknown"})`,
             azCount: racksData.length,
             avgTemp: tempCount ? (sumTemp / tempCount).toFixed(2) : "—",
             riskCount,
@@ -643,10 +772,12 @@
           overviewTableBody.innerHTML = summaryRows
             .map(
               (r) =>
-                `<tr><td>${r.region}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.hottest}</td></tr>`
+                `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.hottest}</td></tr>`
             )
             .join("");
         }
+
+        renderOverviewCharts(summaryRows);
 
         if (compareTableBody) {
           compareRows.sort((a, b) => {
