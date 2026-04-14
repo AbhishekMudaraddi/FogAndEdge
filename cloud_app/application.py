@@ -152,6 +152,9 @@ def aggregate_latest_for_az(az_id: str) -> tuple[dict[str, Any], list[str]]:
     out: dict[str, Any] = {}
     errors: list[str] = []
     rack_ids = racks_for_az(az_id)
+    normal_count = 0
+    warning_count = 0
+    critical_count = 0
     for st in VALID_SENSORS:
         values: list[float] = []
         items: list[dict[str, Any]] = []
@@ -170,9 +173,20 @@ def aggregate_latest_for_az(az_id: str) -> tuple[dict[str, Any], list[str]]:
         base = dict(items[0])
         if values:
             base["value"] = round(sum(values) / len(values), 2)
+        if st == "rack_temperature":
+            for v in values:
+                if v >= 40.0:
+                    critical_count += 1
+                elif v >= 35.0:
+                    warning_count += 1
+                else:
+                    normal_count += 1
         base["rack_id"] = az_id
         base["az_id"] = az_id
         base["rack_count"] = len(items)
+        base["rack_normal_count"] = normal_count
+        base["rack_warning_count"] = warning_count
+        base["rack_critical_count"] = critical_count
         base["overheating"] = any(bool(i.get("overheating")) for i in items)
         base["cooling_failure"] = any(bool(i.get("cooling_failure")) for i in items)
         base["static_risk"] = any(bool(i.get("static_risk")) for i in items)

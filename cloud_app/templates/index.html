@@ -337,6 +337,87 @@
       .chart-wrap {
         height: 260px;
       }
+
+      @media (max-width: 1024px) {
+        .charts-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .top-nav {
+          right: 12px;
+          top: 12px;
+        }
+
+        .top-nav button {
+          font-size: 14px;
+          padding: 8px 10px;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .top-nav {
+          left: 10px;
+          right: 10px;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .top-nav button {
+          flex: 1 1 auto;
+          min-width: 92px;
+          text-align: center;
+        }
+
+        .region-panel {
+          width: calc(100vw - 20px);
+          left: 10px;
+          top: 70px;
+          padding: 10px;
+        }
+
+        .dashboard-modal-card {
+          width: 96vw;
+          height: 94vh;
+          border-radius: 10px;
+        }
+
+        .data-view {
+          padding: 88px 10px 14px;
+        }
+
+        .overview-toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .overview-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+
+        .table-wrap table {
+          min-width: 720px;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .top-nav button {
+          font-size: 13px;
+          padding: 7px 8px;
+        }
+
+        .region-panel h3 {
+          font-size: 14px;
+        }
+
+        .chart-wrap {
+          height: 220px;
+        }
+      }
     </style>
   </head>
   <body>

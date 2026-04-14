@@ -217,7 +217,7 @@
         ],
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         cutout: "55%",
         plugins: {
@@ -314,7 +314,7 @@
         datasets,
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
@@ -367,6 +367,9 @@
       const level = tempVal === null ? "normal" : tempLevel(tempVal);
       const statusLabel = level === "critical" ? "Critical" : level === "warning" ? "Warning" : "Normal";
       const rc = riskCount(latest);
+      const tempAgg = latest && latest.rack_temperature ? latest.rack_temperature : null;
+      const normalRacks = tempAgg && tempAgg.rack_normal_count != null ? Number(tempAgg.rack_normal_count) : null;
+      const criticalRacks = tempAgg && tempAgg.rack_critical_count != null ? Number(tempAgg.rack_critical_count) : null;
 
       const header = document.createElement("div");
       header.className = "rack-card-header";
@@ -382,28 +385,13 @@
       const grid = document.createElement("div");
       grid.className = "rack-card-metrics";
       grid.innerHTML =
-        `<div><span>Rack Temp</span><strong>${metricCell(latest, "rack_temperature")}</strong></div>` +
+        `<div><span>Avg Rack Temp (AZ)</span><strong>${metricCell(latest, "rack_temperature")}</strong></div>` +
         `<div><span>Room Temp</span><strong>${metricCell(latest, "room_temperature")}</strong></div>` +
         `<div><span>Humidity</span><strong>${metricCell(latest, "humidity")}</strong></div>` +
         `<div><span>Airflow</span><strong>${metricCell(latest, "airflow")}</strong></div>` +
         `<div><span>Outdoor Temp</span><strong>${metricCell(latest, "outdoor_temperature")}</strong></div>` +
-        `<div><span>Risk flags</span><strong>${rc}</strong></div>`;
-
-      const fogRow = document.createElement("div");
-      fogRow.className = "rack-card-fog";
-      fogRow.innerHTML = `<span>Fog: cooling η</span><strong>${formatFogEta(latest)}</strong>`;
-
-      const metrics = document.createElement("div");
-      metrics.className = "rack-metrics";
-      const lastTs = extractLastTimestamp(latest);
-      const hotIntervals = overheatState[rackRow.rack_id] || 0;
-      metrics.innerHTML =
-        `<div><span>Last update</span><strong>${formatTime(lastTs)}</strong></div>` +
-        `<div><span>Overheat duration</span><strong>${formatOverheatDuration(hotIntervals)}</strong></div>`;
-
-      const note = document.createElement("p");
-      note.className = "rack-card-note";
-      note.textContent = rackHealthNarrative(latest);
+        `<div><span>Normal racks</span><strong>${normalRacks !== null && Number.isFinite(normalRacks) ? normalRacks : "—"}</strong></div>` +
+        `<div><span>Critical racks</span><strong>${criticalRacks !== null && Number.isFinite(criticalRacks) ? criticalRacks : "—"}</strong></div>`;
 
       const footer = document.createElement("p");
       footer.className = "rack-risk";
@@ -430,7 +418,7 @@
       });
       actions.appendChild(detailsBtn);
 
-      card.append(header, grid, fogRow, metrics, note, footer, actions);
+      card.append(header, grid, footer, actions);
       rackGrid.append(card);
     }
   }
@@ -514,7 +502,7 @@
         datasets,
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: { display: isHot, labels: { color: "#c9d4e5", boxWidth: 10 } },
@@ -556,7 +544,7 @@
         ],
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         cutout: "52%",
         plugins: {
@@ -737,7 +725,7 @@
               datasets,
             },
             options: {
-              responsive: false,
+              responsive: true,
               maintainAspectRatio: false,
               plugins: {
                 legend: { labels: { color: "#c9d4e5", boxWidth: 10 } },
@@ -790,7 +778,7 @@
               ],
             },
             options: {
-              responsive: false,
+              responsive: true,
               maintainAspectRatio: false,
               plugins: { legend: { display: false } },
               scales: {
