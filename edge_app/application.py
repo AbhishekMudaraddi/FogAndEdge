@@ -199,6 +199,15 @@ def publish_batch(batch: list[dict[str, Any]]) -> None:
         logger.exception("SQS send failed: %s", e)
 
 
+def publish_once_now() -> tuple[bool, str, int]:
+    """Generate and publish one batch immediately."""
+    if not SQS_QUEUE_URL:
+        return False, "SQS_QUEUE_URL not set; cannot publish immediately.", 0
+    batch = build_reading_batch()
+    publish_batch(batch)
+    return True, "Published one immediate batch to SQS.", len(batch)
+
+
 def sensor_loop() -> None:
     global _cycle_count
     logger.info(
@@ -286,11 +295,17 @@ def sim_critical_start():
     if not _sim_auth_ok():
         return jsonify({"error": "Unauthorized"}), 401
     _write_ireland_sim_file(True)
+    immediate = bool(request.args.get("publish_now", "1").strip() not in {"0", "false", "no"})
+    publish_result: dict[str, Any] = {"attempted": False}
+    if immediate:
+        ok, msg, count = publish_once_now()
+        publish_result = {"attempted": True, "ok": ok, "message": msg, "readings_published": count}
     logger.warning("Ireland critical simulation STARTED (ew1 racks → critical temps)")
     return jsonify(
         {
             "active": True,
             "message": "Ireland (eu-west-1) racks now simulate critical rack temperatures.",
+            "immediate_publish": publish_result,
         }
     )
 
@@ -302,6 +317,15 @@ def sim_critical_stop():
     _write_ireland_sim_file(False)
     logger.info("Ireland critical simulation STOPPED (normal temperature bands)")
     return jsonify({"active": False, "message": "Simulation off; all racks use normal bands."})
+
+
+@application.post("/sim/publish-now")
+def sim_publish_now():
+    if not _sim_auth_ok():
+        return jsonify({"error": "Unauthorized"}), 401
+    ok, msg, count = publish_once_now()
+    status = 200 if ok else 503
+    return jsonify({"ok": ok, "message": msg, "readings_published": count}), status
 
 
 _SIM_PAGE_HTML = """<!DOCTYPE html>
@@ -335,6 +359,7 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
   <div class="row">
     <button type="button" class="start" id="btn-start">Start simulation</button>
     <button type="button" class="stop" id="btn-stop">Stop simulation</button>
+    <button type="button" id="btn-publish">Publish now</button>
   </div>
   <label for="sim-key">API key (only if EDGE_SIM_KEY is set on this environment)</label>
   <input type="password" id="sim-key" placeholder="Leave blank if no key configured" autocomplete="off" />
@@ -370,8 +395,9 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
         out.textContent = "Request error: " + e;
       }
     }
-    document.getElementById("btn-start").addEventListener("click", () => post("/sim/critical/start"));
+    document.getElementById("btn-start").addEventListener("click", () => post("/sim/critical/start?publish_now=1"));
     document.getElementById("btn-stop").addEventListener("click", () => post("/sim/critical/stop"));
+    document.getElementById("btn-publish").addEventListener("click", () => post("/sim/publish-now"));
     refresh();
     setInterval(refresh, 5000);
   </script>
