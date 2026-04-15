@@ -244,6 +244,17 @@ def get_latest_for_rack(rack_id: str) -> tuple[dict[str, Any], list[str]]:
 application = Flask(__name__)
 
 
+def _dashboard_poll_interval_ms() -> int:
+    """Dashboard/API polling interval for regional + detailed modal refresh."""
+    raw = os.environ.get("DASHBOARD_POLL_INTERVAL_MS", "1000").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 1000
+    # Keep a sensible floor to avoid accidental browser/API overload.
+    return max(1000, value)
+
+
 def _render_dashboard(selected_region: str):
     region = normalize_region(selected_region)
     region_racks = racks_for_region(region)
@@ -252,7 +263,7 @@ def _render_dashboard(selected_region: str):
         "dashboard.html",
         rack_id=region_racks[0] if region_racks else DEFAULT_RACK_ID,
         rack_ids=racks,
-        poll_interval_ms=30000,
+        poll_interval_ms=_dashboard_poll_interval_ms(),
         selected_region=region,
     )
 
