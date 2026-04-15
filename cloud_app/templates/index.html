@@ -968,12 +968,15 @@
       const overviewRiskChartCanvas = document.getElementById("overview-risk-chart");
       const overviewMeta = document.getElementById("overview-meta");
       const overviewRefreshBtn = document.getElementById("overview-refresh");
+      const FEED_NOTIFICATION_TTL_MS = 3000;
       let overviewTempChart = null;
       let overviewRiskChart = null;
       let compareChart = null;
       let currentViewId = "home-view";
       let dataRefreshInFlight = false;
       let latestSummaryRows = [];
+      let lastAzCriticalState = {};
+      let criticalFeedClearTimer = null;
       const OVERVIEW_REFRESH_SEC = 30;
       let overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
       if (select) {
@@ -1183,11 +1186,33 @@
         resumeHomeRotation();
       }
 
+      function renderTransientCriticalFeed(events) {
+        if (!criticalFeed) return;
+        if (!events || !events.length) return;
+        const top = events.slice(0, 3);
+        criticalFeed.innerHTML = top
+          .map((evt) => {
+            if (evt.type === "recovered") {
+              const tempText = Number.isFinite(evt.temp) ? ` (${evt.temp.toFixed(2)}°C)` : "";
+              return `<article class="critical-note"><strong>Recovered:</strong> ${evt.region} · ${evt.az} is back to normal${tempText}</article>`;
+            }
+            return `<article class="critical-note"><strong>Critical:</strong> ${evt.region} · ${evt.az} at ${evt.temp.toFixed(
+              2
+            )}°C</article>`;
+          })
+          .join("");
+        if (criticalFeedClearTimer) clearTimeout(criticalFeedClearTimer);
+        criticalFeedClearTimer = setTimeout(() => {
+          criticalFeed.innerHTML = "";
+        }, FEED_NOTIFICATION_TTL_MS);
+      }
+
       async function refreshCriticalFeed() {
         if (!criticalFeed) return;
         const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
         const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
-        const criticals = [];
+        const nextAzCriticalState = {};
+        const transitionEvents = [];
         settled.forEach((result, idx) => {
           if (result.status !== "fulfilled") return;
           const code = regionCodes[idx];
@@ -1196,28 +1221,27 @@
           rows.forEach((row) => {
             const tempRow = row.latest && row.latest.rack_temperature ? row.latest.rack_temperature : null;
             const temp = tempRow ? Number(tempRow.value) : NaN;
-            if (!Number.isFinite(temp) || temp < 40) return;
-            criticals.push({
+            if (!Number.isFinite(temp)) return;
+            const az = row.label || row.rack_id || "Unknown AZ";
+            const key = `${code}::${row.rack_id || az}`;
+            const isCritical = temp >= 40;
+            const wasCritical = lastAzCriticalState[key];
+            nextAzCriticalState[key] = isCritical;
+            if (wasCritical === undefined || wasCritical === isCritical) return;
+            transitionEvents.push({
+              type: isCritical ? "critical" : "recovered",
               region: code,
-              az: row.label || row.rack_id || "Unknown AZ",
+              az,
               temp,
             });
           });
         });
-        criticals.sort((a, b) => b.temp - a.temp);
-        const top = criticals.slice(0, 3);
-        if (!top.length) {
-          criticalFeed.innerHTML = "";
-          return;
-        }
-        criticalFeed.innerHTML = top
-          .map(
-            (x) =>
-              `<article class="critical-note"><strong>Critical:</strong> ${x.region} · ${x.az} at ${x.temp.toFixed(
-                2
-              )}°C</article>`
-          )
-          .join("");
+        lastAzCriticalState = nextAzCriticalState;
+        transitionEvents.sort((a, b) => {
+          if (a.type !== b.type) return a.type === "critical" ? -1 : 1;
+          return (Number(b.temp) || 0) - (Number(a.temp) || 0);
+        });
+        renderTransientCriticalFeed(transitionEvents);
       }
 
       function renderOverviewCharts(summaryRows, totals) {
