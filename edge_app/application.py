@@ -434,20 +434,20 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
     .targets { margin-top: 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
     .targets h2 { margin: 0 0 8px; font-size: 1rem; }
-    .target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
-    .target-item { display: flex; gap: 8px; align-items: center; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; background: #111720; }
-    .target-item input { margin: 0; }
-    .target-item small { display: block; color: #8b949e; font-size: 0.75rem; }
     button {
       border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.95rem;
       font-weight: 600; cursor: pointer;
     }
     .start { background: #da3633; color: #fff; }
     .stop { background: #238636; color: #fff; }
-    .secondary { background: #1f6feb; color: #fff; }
     .status { margin-top: 12px; padding: 12px; border-radius: 8px; background: #161b22; border: 1px solid #30363d; font-size: 0.9rem; }
     .hint { color: #9fb1c8; font-size: 0.82rem; }
-    .active { margin-top: 8px; color: #cde3ff; font-size: 0.88rem; }
+    .active-list { margin-top: 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+    .active-list h3 { margin: 0 0 8px; font-size: 1rem; }
+    .active-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #30363d; border-radius: 8px; background: #111720; margin-bottom: 8px; }
+    .active-item:last-child { margin-bottom: 0; }
+    .active-empty { color: #8b949e; font-size: 0.88rem; }
+    .active-meta small { display: block; color: #8b949e; font-size: 0.75rem; }
   </style>
 </head>
 <body>
@@ -461,14 +461,13 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
   </div>
   <div class="row">
     <button type="button" class="start" id="btn-start-selected">Start</button>
-    <button type="button" class="stop" id="btn-stop-selected">Stop</button>
-    <button type="button" class="start" id="btn-start-all">Start all</button>
-    <button type="button" class="stop" id="btn-stop-all">Stop all</button>
-    <button type="button" class="secondary" id="btn-publish">Publish now</button>
   </div>
-  <p class="hint">Use <strong>Publish now</strong> right after start/stop to push changes immediately instead of waiting for the next cycle.</p>
+  <p class="hint">After start, the region appears below with its own Stop button.</p>
   <div class="status" id="out">Loading simulation status…</div>
-  <div class="active" id="active"></div>
+  <div class="active-list">
+    <h3>Started simulations</h3>
+    <div id="active"></div>
+  </div>
   <script>
     const out = document.getElementById("out");
     const activeEl = document.getElementById("active");
@@ -486,10 +485,27 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
       if (!availableRegions.length) return;
       regionSelect.value = availableRegions.some((r) => r.region === prev) ? prev : availableRegions[0].region;
     }
-    function describeActive(activeRegions) {
-      if (!Array.isArray(activeRegions) || !activeRegions.length) return "Active critical simulation: none";
-      const labels = activeRegions.map((r) => `${r.name} (${r.region})`);
-      return "Active critical simulation: " + labels.join(", ");
+    function renderActiveList(activeRegions) {
+      if (!activeEl) return;
+      if (!Array.isArray(activeRegions) || !activeRegions.length) {
+        activeEl.innerHTML = `<p class="active-empty">No running simulations.</p>`;
+        return;
+      }
+      activeEl.innerHTML = activeRegions
+        .map((r) => (
+          `<div class="active-item">` +
+          `<div class="active-meta"><strong>${r.name}</strong><small>${r.region}</small></div>` +
+          `<button type="button" class="stop" data-stop-region="${r.region}">Stop</button>` +
+          `</div>`
+        ))
+        .join("");
+      activeEl.querySelectorAll("[data-stop-region]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const region = btn.getAttribute("data-stop-region");
+          if (!region) return;
+          post("/sim/critical/stop", { regions: [region] });
+        });
+      });
     }
     async function refresh() {
       try {
@@ -501,7 +517,7 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
         out.textContent = active.length
           ? `Simulation running in ${active.length} region(s).`
           : "No active simulation.";
-        activeEl.textContent = describeActive(active);
+        renderActiveList(active);
       } catch (e) {
         out.textContent = "Status error: " + e;
       }
@@ -511,7 +527,7 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
         const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
         const j = await r.json();
         out.textContent = j.message || "Done.";
-        if (j.active_regions) activeEl.textContent = describeActive(j.active_regions);
+        if (j.active_regions) renderActiveList(j.active_regions);
         await refresh();
       } catch (e) {
         out.textContent = "Request error: " + e;
@@ -522,14 +538,6 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
       if (!region) return;
       post("/sim/critical/start?publish_now=1", { regions: [region] });
     });
-    document.getElementById("btn-stop-selected").addEventListener("click", () => {
-      const region = selectedRegion();
-      if (!region) return;
-      post("/sim/critical/stop", { regions: [region] });
-    });
-    document.getElementById("btn-start-all").addEventListener("click", () => post("/sim/critical/start?publish_now=1", { regions: availableRegions.map((r) => r.region) }));
-    document.getElementById("btn-stop-all").addEventListener("click", () => post("/sim/critical/stop", { regions: availableRegions.map((r) => r.region) }));
-    document.getElementById("btn-publish").addEventListener("click", () => post("/sim/publish-now"));
     refresh();
     setInterval(refresh, 5000);
   </script>

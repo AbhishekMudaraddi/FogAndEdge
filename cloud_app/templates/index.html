@@ -906,6 +906,8 @@
       };
       const regionByCode = {};
       const entityByCode = {};
+      const azAlertEntityById = {};
+      const regionDangerEntityByCode = {};
       let focusedRegionCode = null;
       let autoRotateEnabled = true;
       let pauseAutoRotateUntilMs = 0;
@@ -940,6 +942,33 @@
           description: `${region.name}`,
         });
         entityByCode[region.code] = entity;
+
+        // Extra red danger badge shown when any AZ outage exists in this region.
+        const dangerEntity = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(region.lon, region.lat),
+          point: {
+            pixelSize: 18,
+            color: Cesium.Color.fromCssColorString("#ff2a4d"),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          },
+          label: {
+            text: "! OUTAGE",
+            font: "12px Arial",
+            fillColor: Cesium.Color.WHITE,
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromCssColorString("rgba(125,10,22,0.88)"),
+            pixelOffset: new Cesium.Cartesian2(0, -24),
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          },
+          show: false,
+        });
+        regionDangerEntityByCode[region.code] = dangerEntity;
       });
 
       function azMarkerCoords(regionCode, azId, idx, total) {
@@ -1008,7 +1037,6 @@
       const regionalCriticalOpenDash = document.getElementById("region-critical-open-dash");
       const dismissedAzOutage = {};
       let activeAzOutages = [];
-      const azAlertEntityById = {};
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
       const compareRegionA = document.getElementById("compare-region-a");
@@ -1066,6 +1094,12 @@
         const marker = azAlertEntityById[azId];
         if (!marker) return;
         marker.show = Boolean(isOut);
+      }
+
+      function setRegionDanger(regionCode, isDanger) {
+        const marker = regionDangerEntityByCode[regionCode];
+        if (!marker) return;
+        marker.show = Boolean(isDanger);
       }
 
       function emphasizeOutageAz(regionCode, azId) {
@@ -1134,10 +1168,12 @@
         const recovered = [];
 
         for (const regionCode of regionCodes) {
+          let regionHasOutage = false;
           let payload = null;
           try {
             payload = await fetchRegionSummary(regionCode);
           } catch (_) {
+            setRegionDanger(regionCode, false);
             continue;
           }
           const racks = Array.isArray(payload.racks) ? payload.racks : [];
@@ -1149,6 +1185,7 @@
             const wasOut = Boolean(azOutageState[key]);
             nextState[key] = isOut;
             setAzOutageMarker(azId, isOut);
+            if (isOut) regionHasOutage = true;
             if (isOut && !wasOut) {
               const rt = row.latest && row.latest.rack_temperature;
               const temp = rt && rt.value != null ? Number(rt.value) : NaN;
@@ -1175,6 +1212,7 @@
               setAzOutageMarker(azId, false);
             }
           }
+          setRegionDanger(regionCode, regionHasOutage);
         }
 
         azOutageState = nextState;
