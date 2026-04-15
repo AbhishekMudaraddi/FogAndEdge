@@ -257,6 +257,11 @@ def _render_dashboard(selected_region: str):
     )
 
 
+def _dashboard_region_az_map() -> dict[str, list[str]]:
+    """AZ scope ids per dashboard region (for globe / index client logic)."""
+    return {r: list(REGION_AZ_RACKS[r]) for r in DASHBOARD_REGIONS if r in REGION_AZ_RACKS}
+
+
 @application.get("/")
 def landing():
     return render_template(
@@ -265,6 +270,7 @@ def landing():
         map_zoom=3,
         regions=SUPPORTED_REGIONS,
         dashboard_regions=DASHBOARD_REGIONS,
+        region_az_ids=_dashboard_region_az_map(),
     )
 
 

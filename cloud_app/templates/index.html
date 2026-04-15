@@ -221,6 +221,132 @@
         background: #0d1322;
       }
 
+      .region-critical-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 2100;
+        display: none;
+      }
+
+      .region-critical-modal.show {
+        display: block;
+      }
+
+      .region-critical-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.72);
+      }
+
+      .region-critical-card {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(480px, 92vw);
+        max-height: min(80vh, 560px);
+        display: flex;
+        flex-direction: column;
+        background: linear-gradient(165deg, #1a0a0c 0%, #12080e 100%);
+        border: 1px solid rgba(255, 80, 80, 0.55);
+        border-radius: 14px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 100, 100, 0.12) inset;
+        overflow: hidden;
+      }
+
+      .region-critical-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        background: rgba(80, 20, 24, 0.55);
+        border-bottom: 1px solid rgba(255, 100, 100, 0.25);
+        color: #ffe8e8;
+        font-size: 15px;
+      }
+
+      .region-critical-close {
+        border: 0;
+        background: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+      }
+
+      .region-critical-close:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .region-critical-body {
+        padding: 14px 16px 10px;
+        overflow-y: auto;
+        flex: 1;
+      }
+
+      .region-critical-lead {
+        margin: 0 0 12px;
+        font-size: 14px;
+        line-height: 1.5;
+        color: #f0c4c4;
+      }
+
+      .region-critical-az-list {
+        margin: 0;
+        padding: 0 0 0 18px;
+        color: #ffd6d6;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .region-critical-az-list li {
+        margin-bottom: 6px;
+      }
+
+      .region-critical-az-list .region-critical-block {
+        list-style: none;
+        margin-left: 0;
+        padding-left: 0;
+      }
+
+      .region-critical-az-list .region-critical-block > ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+      }
+
+      .region-critical-sub {
+        margin: 14px 0 6px;
+        font-size: 12px;
+        font-weight: 700;
+        color: #ff9a9a;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .region-critical-footer {
+        padding: 12px 16px 16px;
+        border-top: 1px solid rgba(255, 100, 100, 0.2);
+      }
+
+      .region-critical-primary {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 14px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        background: #e85d5d;
+        color: #0a0606;
+      }
+
+      .region-critical-primary:hover {
+        background: #ff7a7a;
+      }
+
       .page-view {
         position: absolute;
         inset: 0;
@@ -657,8 +783,25 @@
       </article>
     </section>
 
+    <section id="region-critical-modal" class="region-critical-modal" aria-hidden="true" aria-labelledby="region-critical-title">
+      <div class="region-critical-backdrop" data-rc-dismiss="1"></div>
+      <article class="region-critical-card" role="alertdialog" aria-modal="true">
+        <header class="region-critical-header">
+          <strong id="region-critical-title">Region-wide critical state</strong>
+          <button type="button" class="region-critical-close" id="region-critical-close" aria-label="Dismiss alert">Dismiss</button>
+        </header>
+        <div class="region-critical-body">
+          <p id="region-critical-lead" class="region-critical-lead"></p>
+          <ul id="region-critical-az-list" class="region-critical-az-list"></ul>
+        </div>
+        <footer class="region-critical-footer">
+          <button type="button" class="region-critical-primary" id="region-critical-open-dash">Open regional dashboard</button>
+        </footer>
+      </article>
+    </section>
+
     <script id="map-config" type="application/json">
-      {{ {"center": map_center, "zoom": map_zoom, "regions": regions, "dashboardRegions": dashboard_regions} | tojson }}
+      {{ {"center": map_center, "zoom": map_zoom, "regions": regions, "dashboardRegions": dashboard_regions, "regionAzIds": region_az_ids} | tojson }}
     </script>
     <script
       src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"
@@ -681,7 +824,9 @@
         zoom: 3,
         regions: [],
         dashboardRegions: [],
+        regionAzIds: {},
       };
+      const regionAzMap = cfg.regionAzIds && typeof cfg.regionAzIds === "object" ? cfg.regionAzIds : {};
 
       const viewer = new Cesium.Viewer("globe", {
         animation: false,
@@ -804,6 +949,13 @@
       const modalClose = document.getElementById("modal-close");
       const modalTitle = document.getElementById("modal-title");
       const modalFrame = document.getElementById("dashboard-frame");
+      const regionalCriticalModal = document.getElementById("region-critical-modal");
+      const regionalCriticalClose = document.getElementById("region-critical-close");
+      const regionalCriticalLead = document.getElementById("region-critical-lead");
+      const regionalCriticalAzList = document.getElementById("region-critical-az-list");
+      const regionalCriticalOpenDash = document.getElementById("region-critical-open-dash");
+      const dismissedRegionalCriticalFp = {};
+      let activeRegionalCrises = [];
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
       const compareRegionA = document.getElementById("compare-region-a");
@@ -849,6 +1001,30 @@
           e.point.color = active
             ? Cesium.Color.fromCssColorString("#ffd166")
             : Cesium.Color.fromCssColorString("#3ea6ff");
+          e.point.outlineWidth = 2;
+        });
+      }
+
+      /** Full-region critical alert: pulse the affected region on the globe. */
+      function emphasizeCriticalRegion(regionCode) {
+        const region = regionByCode[regionCode];
+        if (region) {
+          flyToCoordinates(region.lon, region.lat, 1.35, FOCUS_RANGE);
+        }
+        Object.keys(entityByCode).forEach((k) => {
+          const e = entityByCode[k];
+          if (!e || !e.point) return;
+          if (k === regionCode) {
+            e.point.pixelSize = 20;
+            e.point.color = Cesium.Color.fromCssColorString("#ff3355");
+            e.point.outlineColor = Cesium.Color.fromCssColorString("#ffffff");
+            e.point.outlineWidth = 3;
+          } else {
+            e.point.pixelSize = 10;
+            e.point.color = Cesium.Color.fromCssColorString("#3ea6ff");
+            e.point.outlineColor = Cesium.Color.WHITE;
+            e.point.outlineWidth = 2;
+          }
         });
       }
 
@@ -882,6 +1058,129 @@
           throw new Error(`Failed summary for ${regionCode}: ${res.status} ${txt}`);
         }
         return res.json();
+      }
+
+      function azRowFullyCritical(row) {
+        const rt = row.latest && row.latest.rack_temperature;
+        if (!rt) return false;
+        const cc = Number(rt.rack_critical_count);
+        const rc = Number(rt.rack_count);
+        const total = Number.isFinite(rc) && rc > 0 ? rc : 3;
+        return Number.isFinite(cc) && cc >= total;
+      }
+
+      function regionalCriticalFingerprint(regionCode, azIds) {
+        return `${regionCode}:${(azIds || []).slice().sort().join(",")}`;
+      }
+
+      async function checkRegionalCriticalAlerts() {
+        if (currentViewId !== "home-view") return;
+        if (modal && modal.classList.contains("show")) return;
+        if (regionalCriticalModal && regionalCriticalModal.classList.contains("show")) return;
+
+        const regionCodes = regions.filter((r) => dashboardRegionSet.has(r.code)).map((r) => r.code);
+        const crises = [];
+
+        for (const regionCode of regionCodes) {
+          const expectedAz = regionAzMap[regionCode];
+          if (!expectedAz || !expectedAz.length) continue;
+
+          let payload = null;
+          try {
+            payload = await fetchRegionSummary(regionCode);
+          } catch (_) {
+            continue;
+          }
+          const racks = Array.isArray(payload.racks) ? payload.racks : [];
+          const byId = {};
+          racks.forEach((row) => {
+            if (row && row.rack_id) byId[row.rack_id] = row;
+          });
+
+          let allCritical = true;
+          const azLines = [];
+          for (const azId of expectedAz) {
+            const row = byId[azId];
+            if (!row || !azRowFullyCritical(row)) {
+              allCritical = false;
+              break;
+            }
+            const rt = row.latest && row.latest.rack_temperature;
+            const temp = rt && rt.value != null ? Number(rt.value) : NaN;
+            const label = row.label || azId;
+            const tStr = Number.isFinite(temp) ? `${temp.toFixed(1)}°C` : "—";
+            azLines.push({ azId, label, tempStr: tStr });
+          }
+
+          if (!allCritical) {
+            delete dismissedRegionalCriticalFp[regionCode];
+            continue;
+          }
+
+          const fp = regionalCriticalFingerprint(regionCode, expectedAz);
+          if (dismissedRegionalCriticalFp[regionCode] === fp) continue;
+
+          const meta = regionByCode[regionCode];
+          crises.push({
+            regionCode,
+            regionName: meta ? meta.name : regionCode,
+            azLines,
+            fingerprint: fp,
+            expectedAz: expectedAz.slice(),
+          });
+        }
+
+        if (!crises.length) return;
+
+        activeRegionalCrises = crises;
+
+        const lead = regionalCriticalLead;
+        const listEl = regionalCriticalAzList;
+        if (!lead || !listEl || !regionalCriticalModal) return;
+
+        lead.textContent =
+          crises.length === 1
+            ? `Every monitored availability zone in this region reports all racks in critical thermal state (rack temperature ≥ 40°C). Review the zones below.`
+            : `Every monitored availability zone in each of the following regions reports all racks as critical. Review the details below.`;
+
+        listEl.innerHTML = crises
+          .map((c) => {
+            const items = c.azLines
+              .map((z) => `<li><strong>${z.label}</strong> (${z.azId}) — avg rack temp ${z.tempStr}, all racks critical</li>`)
+              .join("");
+            return `<li class="region-critical-block"><p class="region-critical-sub">${c.regionCode} — ${c.regionName}</p><ul>${items}</ul></li>`;
+          })
+          .join("");
+
+        regionalCriticalModal.classList.add("show");
+        regionalCriticalModal.setAttribute("aria-hidden", "false");
+
+        const primary = crises[0].regionCode;
+        focusedRegionCode = primary;
+        autoRotateEnabled = false;
+        pauseAutoRotateUntilMs = Date.now() + 86_400_000;
+        emphasizeCriticalRegion(primary);
+
+        if (regionalCriticalOpenDash) {
+          regionalCriticalOpenDash.onclick = () => {
+            const batch = activeRegionalCrises.slice();
+            const first = batch[0] ? batch[0].regionCode : primary;
+            closeRegionalCriticalModal(batch);
+            if (first) openDashboardModal(first);
+          };
+        }
+      }
+
+      function closeRegionalCriticalModal(crisesArg) {
+        if (!regionalCriticalModal) return;
+        const batch = Array.isArray(crisesArg) && crisesArg.length ? crisesArg : activeRegionalCrises.slice();
+        batch.forEach((c) => {
+          dismissedRegionalCriticalFp[c.regionCode] = c.fingerprint;
+        });
+        activeRegionalCrises = [];
+        regionalCriticalModal.classList.remove("show");
+        regionalCriticalModal.setAttribute("aria-hidden", "true");
+        resumeHomeRotation();
       }
 
       async function refreshCriticalFeed() {
@@ -1245,6 +1544,9 @@
         if (viewId === "overview-view" || viewId === "compare-view") {
           loadOverviewAndCompare();
         }
+        if (viewId === "home-view") {
+          void checkRegionalCriticalAlerts();
+        }
       }
 
       navButtons.forEach((btn) => {
@@ -1348,12 +1650,30 @@
         modalClose.addEventListener("click", () => closeDashboardModal());
       }
 
+      if (regionalCriticalModal) {
+        regionalCriticalModal.addEventListener("click", (evt) => {
+          const target = evt.target;
+          if (target instanceof HTMLElement && target.dataset.rcDismiss === "1") {
+            closeRegionalCriticalModal();
+          }
+        });
+      }
+      if (regionalCriticalClose) {
+        regionalCriticalClose.addEventListener("click", () => closeRegionalCriticalModal());
+      }
+
       document.addEventListener("keydown", (evt) => {
-        if (evt.key === "Escape") closeDashboardModal();
+        if (evt.key !== "Escape") return;
+        if (regionalCriticalModal && regionalCriticalModal.classList.contains("show")) {
+          closeRegionalCriticalModal();
+        } else {
+          closeDashboardModal();
+        }
       });
 
       activateView("home-view");
       refreshCriticalFeed();
+      void checkRegionalCriticalAlerts();
       setInterval(() => {
         if (currentViewId === "overview-view" || currentViewId === "compare-view") {
           overviewRefreshCountdown -= 1;
@@ -1366,6 +1686,7 @@
           loadOverviewAndCompare();
         }
         refreshCriticalFeed();
+        void checkRegionalCriticalAlerts();
       }, 30000);
     </script>
   </body>
