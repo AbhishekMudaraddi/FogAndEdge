@@ -75,12 +75,11 @@ _cycle_count = 0
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
 
-# Ireland (eu-west-1) racks use the "ew1-" prefix in rack IDs.
-# Persist simulation on/off in a file so every Gunicorn worker shares the same state.
+# Persist simulation state in a file so every Gunicorn worker shares the same state.
 _critical_sim_lock = threading.Lock()
-IRELAND_SIM_STATE_FILE = os.environ.get(
-    "EDGE_IRELAND_SIM_STATE_FILE",
-    os.path.join(os.environ.get("TMPDIR", "/tmp"), "edge_ireland_critical_sim"),
+SIM_STATE_FILE = os.environ.get(
+    "EDGE_SIM_STATE_FILE",
+    os.path.join(os.environ.get("TMPDIR", "/tmp"), "edge_critical_sim_state.json"),
 )
 # Optional: set EDGE_SIM_KEY in EB to require Bearer token or ?key= on simulation routes.
 EDGE_SIM_KEY = os.environ.get("EDGE_SIM_KEY", "").strip()
@@ -98,6 +97,16 @@ _RACK_REGION_BY_PREFIX = {
     "ase1": "ap-southeast-1",
     "an1": "ap-northeast-1",
 }
+_REGION_NAME_BY_CODE = {
+    "eu-west-1": "Ireland",
+    "us-east-1": "N. Virginia",
+    "us-east-2": "Ohio",
+    "ap-south-1": "Mumbai",
+    "ap-southeast-1": "Singapore",
+    "ap-northeast-1": "Tokyo",
+}
+_PREFIX_BY_REGION = {region: prefix for prefix, region in _RACK_REGION_BY_PREFIX.items()}
+_DEFAULT_SIM_REGION = "eu-west-1"
 
 
 def get_sqs_client():
@@ -107,37 +116,111 @@ def get_sqs_client():
     return _sqs
 
 
-def _is_ireland_rack(rack_id: str) -> bool:
-    return rack_id.lower().startswith("ew1-")
-
-
-def _read_ireland_sim_file() -> bool:
+def _read_active_prefixes() -> set[str]:
     try:
-        with open(IRELAND_SIM_STATE_FILE, "r", encoding="ascii") as f:
-            return f.read().strip() == "1"
+        with open(SIM_STATE_FILE, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
     except OSError:
-        return False
+        return set()
+    if not raw:
+        return set()
+    # Backward compatibility from old boolean file state.
+    if raw == "1":
+        prefix = _PREFIX_BY_REGION.get(_DEFAULT_SIM_REGION)
+        return {prefix} if prefix else set()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    active = payload.get("active_prefixes")
+    if not isinstance(active, list):
+        return set()
+    out: set[str] = set()
+    for item in active:
+        if isinstance(item, str):
+            pref = item.strip().lower()
+            if pref in _RACK_REGION_BY_PREFIX:
+                out.add(pref)
+    return out
 
 
-def _write_ireland_sim_file(active: bool) -> None:
-    directory = os.path.dirname(IRELAND_SIM_STATE_FILE)
+def _write_active_prefixes(prefixes: set[str]) -> None:
+    directory = os.path.dirname(SIM_STATE_FILE)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    tmp_path = IRELAND_SIM_STATE_FILE + ".tmp"
-    payload = "1" if active else "0"
+    tmp_path = SIM_STATE_FILE + ".tmp"
+    payload = json.dumps({"active_prefixes": sorted(prefixes)})
     with _critical_sim_lock:
-        with open(tmp_path, "w", encoding="ascii") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(payload)
-        os.replace(tmp_path, IRELAND_SIM_STATE_FILE)
+        os.replace(tmp_path, SIM_STATE_FILE)
 
 
-def _ireland_sim_active() -> bool:
-    return _read_ireland_sim_file()
+def _active_sim_regions() -> list[dict[str, str]]:
+    out = []
+    for prefix in sorted(_read_active_prefixes()):
+        code = _RACK_REGION_BY_PREFIX[prefix]
+        out.append({"region": code, "name": _REGION_NAME_BY_CODE.get(code, code), "prefix": prefix})
+    return out
 
 
-def _random_value(sensor_type: str, rack_id: str, ireland_sim: bool) -> float:
+def _normalize_region_list(raw_regions: Any) -> list[str]:
+    if isinstance(raw_regions, str):
+        items = [x.strip() for x in raw_regions.split(",") if x.strip()]
+    elif isinstance(raw_regions, list):
+        items = [str(x).strip() for x in raw_regions if str(x).strip()]
+    else:
+        items = []
+    out: list[str] = []
+    for region in items:
+        if region in _PREFIX_BY_REGION and region not in out:
+            out.append(region)
+    return out
+
+
+def _requested_regions() -> list[str]:
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        if "regions" in payload and isinstance(payload.get("regions"), list):
+            return _normalize_region_list(payload.get("regions"))
+        regions = _normalize_region_list(payload.get("regions"))
+        if regions:
+            return regions
+        single = payload.get("region")
+        if isinstance(single, str) and single.strip() in _PREFIX_BY_REGION:
+            return [single.strip()]
+    query_regions = _normalize_region_list(request.args.get("regions"))
+    if query_regions:
+        return query_regions
+    single_q = request.args.get("region")
+    if isinstance(single_q, str) and single_q.strip() in _PREFIX_BY_REGION:
+        return [single_q.strip()]
+    return [_DEFAULT_SIM_REGION]
+
+
+def _set_regions_active(regions: list[str], active: bool) -> list[str]:
+    prefixes = _read_active_prefixes()
+    changed: list[str] = []
+    for region in regions:
+        prefix = _PREFIX_BY_REGION.get(region)
+        if not prefix:
+            continue
+        if active and prefix not in prefixes:
+            prefixes.add(prefix)
+            changed.append(region)
+        elif not active and prefix in prefixes:
+            prefixes.remove(prefix)
+            changed.append(region)
+    _write_active_prefixes(prefixes)
+    return changed
+
+
+def _random_value(sensor_type: str, rack_id: str, active_prefixes: set[str]) -> float:
     if sensor_type == "rack_temperature":
-        if ireland_sim and _is_ireland_rack(rack_id):
+        rack_prefix = rack_id.split("-", 1)[0].lower()
+        if rack_prefix in active_prefixes:
             return round(random.uniform(SIM_CRITICAL_RACK_TEMP_MIN, SIM_CRITICAL_RACK_TEMP_MAX), 2)
         return round(random.uniform(NORMAL_RACK_TEMP_MIN, NORMAL_RACK_TEMP_MAX), 2)
     if sensor_type == "room_temperature":
@@ -168,14 +251,14 @@ def _az_from_rack_id(rack_id: str) -> str:
 def build_reading_batch() -> list[dict[str, Any]]:
     """One batch: 5 readings per rack, shared ISO timestamp (UTC)."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    ireland_sim = _ireland_sim_active()
+    active_prefixes = _read_active_prefixes()
     batch = []
     for rack_id in RACK_IDS:
         for st in SENSOR_TYPES:
             batch.append(
                 {
                     "sensor_type": st,
-                    "value": _random_value(st, rack_id, ireland_sim),
+                    "value": _random_value(st, rack_id, active_prefixes),
                     "unit": UNITS[st],
                     "timestamp": ts,
                     "rack_id": rack_id,
@@ -259,7 +342,7 @@ def health():
             "sensor_frequency_s": SENSOR_FREQUENCY,
             "dispatch_every_n_cycles": DISPATCH_RATE,
             "readings_per_batch": len(SENSOR_TYPES) * len(RACK_IDS),
-            "ireland_critical_simulation": _ireland_sim_active(),
+            "critical_sim_regions": _active_sim_regions(),
             "sim_auth_required": bool(EDGE_SIM_KEY),
         }
     )
@@ -281,11 +364,11 @@ def debug_last_batch():
 def sim_critical_status():
     return jsonify(
         {
-            "active": _ireland_sim_active(),
-            "target_region": "eu-west-1",
-            "target_rack_prefix": "ew1-",
-            "state_file": IRELAND_SIM_STATE_FILE,
-            "description": "When active, all Ireland (ew1-*) rack_temperature readings are in the critical band (>40°C).",
+            "active_regions": _active_sim_regions(),
+            "available_regions": [
+                {"region": code, "name": _REGION_NAME_BY_CODE.get(code, code), "prefix": _PREFIX_BY_REGION.get(code, "")}
+                for code in sorted(_PREFIX_BY_REGION.keys())
+            ],
         }
     )
 
@@ -294,17 +377,19 @@ def sim_critical_status():
 def sim_critical_start():
     if not _sim_auth_ok():
         return jsonify({"error": "Unauthorized"}), 401
-    _write_ireland_sim_file(True)
+    regions = _requested_regions()
+    changed = _set_regions_active(regions, True)
     immediate = bool(request.args.get("publish_now", "1").strip() not in {"0", "false", "no"})
     publish_result: dict[str, Any] = {"attempted": False}
     if immediate:
         ok, msg, count = publish_once_now()
         publish_result = {"attempted": True, "ok": ok, "message": msg, "readings_published": count}
-    logger.warning("Ireland critical simulation STARTED (ew1 racks → critical temps)")
+    logger.warning("Critical simulation STARTED for regions: %s", ",".join(regions))
     return jsonify(
         {
-            "active": True,
-            "message": "Ireland (eu-west-1) racks now simulate critical rack temperatures.",
+            "active_regions": _active_sim_regions(),
+            "changed_regions": changed,
+            "message": f"Critical simulation enabled for {', '.join(regions)}.",
             "immediate_publish": publish_result,
         }
     )
@@ -314,9 +399,16 @@ def sim_critical_start():
 def sim_critical_stop():
     if not _sim_auth_ok():
         return jsonify({"error": "Unauthorized"}), 401
-    _write_ireland_sim_file(False)
-    logger.info("Ireland critical simulation STOPPED (normal temperature bands)")
-    return jsonify({"active": False, "message": "Simulation off; all racks use normal bands."})
+    regions = _requested_regions()
+    changed = _set_regions_active(regions, False)
+    logger.info("Critical simulation STOPPED for regions: %s", ",".join(regions))
+    return jsonify(
+        {
+            "active_regions": _active_sim_regions(),
+            "changed_regions": changed,
+            "message": f"Critical simulation disabled for {', '.join(regions)}.",
+        }
+    )
 
 
 @application.post("/sim/publish-now")
@@ -336,67 +428,100 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
   <title>Edge — critical simulation</title>
   <style>
     :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
-    body { max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    body { max-width: 760px; margin: 32px auto; padding: 0 16px; }
     h1 { font-size: 1.25rem; font-weight: 600; }
     p { color: #8b949e; font-size: 0.9rem; line-height: 1.5; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+    .targets { margin-top: 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+    .targets h2 { margin: 0 0 8px; font-size: 1rem; }
+    .target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+    .target-item { display: flex; gap: 8px; align-items: center; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; background: #111720; }
+    .target-item input { margin: 0; }
+    .target-item small { display: block; color: #8b949e; font-size: 0.75rem; }
     button {
       border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.95rem;
       font-weight: 600; cursor: pointer;
     }
     .start { background: #da3633; color: #fff; }
     .stop { background: #238636; color: #fff; }
-    .status { margin-top: 12px; padding: 12px; border-radius: 8px; background: #161b22; border: 1px solid #30363d; font-size: 0.85rem; white-space: pre-wrap; }
-    label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
-    input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; }
+    .secondary { background: #1f6feb; color: #fff; }
+    .status { margin-top: 12px; padding: 12px; border-radius: 8px; background: #161b22; border: 1px solid #30363d; font-size: 0.9rem; }
+    .hint { color: #9fb1c8; font-size: 0.82rem; }
+    .active { margin-top: 8px; color: #cde3ff; font-size: 0.88rem; }
   </style>
 </head>
 <body>
-  <h1>Ireland critical simulation</h1>
-  <p>Default telemetry stays in normal bands (rack temp &lt; 35°C). Use <strong>Start</strong> to push
-  all <code>ew1-*</code> (Ireland) rack temperatures into the critical range (&gt;40°C) so the fog layer and dashboard show alerts.
-  <strong>Stop</strong> returns to normal bands.</p>
-  <div class="row">
-    <button type="button" class="start" id="btn-start">Start simulation</button>
-    <button type="button" class="stop" id="btn-stop">Stop simulation</button>
-    <button type="button" id="btn-publish">Publish now</button>
+  <h1>Multi-region disaster simulation</h1>
+  <p>Choose one or more dashboard regions, then start/stop critical simulation for those regions.
+  During simulation, rack temperatures in selected regions are forced into the critical band (&gt;40°C).</p>
+  <div class="targets">
+    <h2>Dashboard regions</h2>
+    <div id="target-grid" class="target-grid"></div>
   </div>
-  <label for="sim-key">API key (only if EDGE_SIM_KEY is set on this environment)</label>
-  <input type="password" id="sim-key" placeholder="Leave blank if no key configured" autocomplete="off" />
-  <div class="status" id="out">Loading status…</div>
+  <div class="row">
+    <button type="button" class="start" id="btn-start-selected">Start selected</button>
+    <button type="button" class="stop" id="btn-stop-selected">Stop selected</button>
+    <button type="button" class="start" id="btn-start-all">Start all</button>
+    <button type="button" class="stop" id="btn-stop-all">Stop all</button>
+    <button type="button" class="secondary" id="btn-publish">Publish now</button>
+  </div>
+  <p class="hint">Use <strong>Publish now</strong> right after start/stop to push changes immediately instead of waiting for the next cycle.</p>
+  <div class="status" id="out">Loading simulation status…</div>
+  <div class="active" id="active"></div>
   <script>
     const out = document.getElementById("out");
-    const keyInput = document.getElementById("sim-key");
-    async function headers() {
-      const h = { "Content-Type": "application/json" };
-      const k = (keyInput && keyInput.value) ? keyInput.value.trim() : "";
-      if (k) h["Authorization"] = "Bearer " + k;
-      return h;
+    const activeEl = document.getElementById("active");
+    const targetGrid = document.getElementById("target-grid");
+    let availableRegions = [];
+    function selectedRegions() {
+      return Array.from(document.querySelectorAll(".sim-target:checked")).map((el) => el.value);
+    }
+    function renderTargets() {
+      if (!targetGrid) return;
+      targetGrid.innerHTML = availableRegions
+        .map((r) => (
+          `<label class="target-item">` +
+          `<input class="sim-target" type="checkbox" value="${r.region}" />` +
+          `<span><strong>${r.name}</strong><small>${r.region}</small></span>` +
+          `</label>`
+        ))
+        .join("");
+    }
+    function describeActive(activeRegions) {
+      if (!Array.isArray(activeRegions) || !activeRegions.length) return "Active critical simulation: none";
+      const labels = activeRegions.map((r) => `${r.name} (${r.region})`);
+      return "Active critical simulation: " + labels.join(", ");
     }
     async function refresh() {
       try {
         const r = await fetch("/sim/critical/status");
         const j = await r.json();
-        out.textContent = JSON.stringify(j, null, 2);
+        availableRegions = Array.isArray(j.available_regions) ? j.available_regions : [];
+        if (targetGrid && !targetGrid.children.length) renderTargets();
+        const active = Array.isArray(j.active_regions) ? j.active_regions : [];
+        out.textContent = active.length
+          ? `Simulation running in ${active.length} region(s).`
+          : "No active simulation.";
+        activeEl.textContent = describeActive(active);
       } catch (e) {
         out.textContent = "Status error: " + e;
       }
     }
-    async function post(path) {
+    async function post(path, body) {
       try {
-        const body = {};
-        const k = (keyInput && keyInput.value) ? keyInput.value.trim() : "";
-        if (k) body.key = k;
-        const r = await fetch(path, { method: "POST", headers: await headers(), body: JSON.stringify(body) });
+        const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
         const j = await r.json();
-        out.textContent = JSON.stringify(j, null, 2);
+        out.textContent = j.message || "Done.";
+        if (j.active_regions) activeEl.textContent = describeActive(j.active_regions);
         await refresh();
       } catch (e) {
         out.textContent = "Request error: " + e;
       }
     }
-    document.getElementById("btn-start").addEventListener("click", () => post("/sim/critical/start?publish_now=1"));
-    document.getElementById("btn-stop").addEventListener("click", () => post("/sim/critical/stop"));
+    document.getElementById("btn-start-selected").addEventListener("click", () => post("/sim/critical/start?publish_now=1", { regions: selectedRegions() }));
+    document.getElementById("btn-stop-selected").addEventListener("click", () => post("/sim/critical/stop", { regions: selectedRegions() }));
+    document.getElementById("btn-start-all").addEventListener("click", () => post("/sim/critical/start?publish_now=1", { regions: availableRegions.map((r) => r.region) }));
+    document.getElementById("btn-stop-all").addEventListener("click", () => post("/sim/critical/stop", { regions: availableRegions.map((r) => r.region) }));
     document.getElementById("btn-publish").addEventListener("click", () => post("/sim/publish-now"));
     refresh();
     setInterval(refresh, 5000);

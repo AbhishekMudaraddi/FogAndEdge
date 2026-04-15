@@ -246,11 +246,11 @@ application = Flask(__name__)
 
 def _dashboard_poll_interval_ms() -> int:
     """Dashboard/API polling interval for regional + detailed modal refresh."""
-    raw = os.environ.get("DASHBOARD_POLL_INTERVAL_MS", "1000").strip()
+    raw = os.environ.get("DASHBOARD_POLL_INTERVAL_MS", "30000").strip()
     try:
         value = int(raw)
     except ValueError:
-        value = 1000
+        value = 30000
     # Keep a sensible floor to avoid accidental browser/API overload.
     return max(1000, value)
 
