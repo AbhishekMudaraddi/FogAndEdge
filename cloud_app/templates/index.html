@@ -81,6 +81,10 @@
         gap: 8px;
       }
 
+      .critical-feed:empty {
+        display: none;
+      }
+
       .critical-note {
         background: rgba(232, 93, 93, 0.16);
         border: 1px solid rgba(232, 93, 93, 0.6);
@@ -94,13 +98,6 @@
 
       .critical-note strong {
         color: #fff1f1;
-      }
-
-      .critical-note.empty {
-        background: rgba(61, 220, 151, 0.1);
-        border-color: rgba(61, 220, 151, 0.45);
-        border-left-color: #3ddc97;
-        color: #d8ffe9;
       }
 
       .region-panel {
@@ -400,11 +397,40 @@
         padding: 8px 10px;
       }
 
+      .compare-lead {
+        margin: 0 0 14px;
+        font-size: 14px;
+        color: #a9bad8;
+        max-width: 52rem;
+      }
+
+      .compare-controls + .compare-section {
+        margin-top: 10px;
+      }
+
+      .compare-section + .compare-section {
+        margin-top: 22px;
+      }
+
+      .compare-section-title {
+        margin: 0 0 10px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #e8f0ff;
+        letter-spacing: 0.02em;
+      }
+
+      .compare-overview-line {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: #c5d4ef;
+        line-height: 1.45;
+      }
+
       .compare-cards {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
-        margin-bottom: 14px;
       }
 
       .compare-card {
@@ -588,10 +614,10 @@
         </div>
       </div>
     </section>
-    <section id="compare-view" class="page-view data-view hidden" aria-label="AZ comparison">
+    <section id="compare-view" class="page-view data-view hidden" aria-label="Region comparison">
       <div class="data-wrap">
-        <h2>Compare Regions</h2>
-        <p>Select two regions for side-by-side comparison.</p>
+        <h2>Compare regions</h2>
+        <p class="compare-lead">Pick two regions. Overview shows a quick visual; detailed comparison lists full metrics side by side.</p>
         <div class="compare-controls">
           <div class="compare-control">
             <label for="compare-region-a">Region A</label>
@@ -602,27 +628,21 @@
             <select id="compare-region-b"></select>
           </div>
         </div>
-        <div id="compare-cards" class="compare-cards"></div>
-        <article class="chart-card">
-          <h4>Selected region overview graph</h4>
-          <div class="chart-wrap">
-            <canvas id="compare-chart"></canvas>
-          </div>
-        </article>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Region</th>
-                <th>AZ count</th>
-                <th>Total racks</th>
-                <th>Avg rack temp (°C)</th>
-                <th>Risk AZs</th>
-                <th>Critical racks</th>
-              </tr>
-            </thead>
-            <tbody id="compare-table-body"></tbody>
-          </table>
+
+        <div class="compare-section">
+          <h3 class="compare-section-title">Overview</h3>
+          <p id="compare-overview-line" class="compare-overview-line" aria-live="polite"></p>
+          <article class="chart-card">
+            <h4>Key metrics at a glance</h4>
+            <div class="chart-wrap">
+              <canvas id="compare-chart"></canvas>
+            </div>
+          </article>
+        </div>
+
+        <div class="compare-section">
+          <h3 class="compare-section-title">Detailed comparison</h3>
+          <div id="compare-cards" class="compare-cards"></div>
         </div>
       </div>
     </section>
@@ -786,10 +806,10 @@
       const modalFrame = document.getElementById("dashboard-frame");
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
-      const compareTableBody = document.getElementById("compare-table-body");
       const compareRegionA = document.getElementById("compare-region-a");
       const compareRegionB = document.getElementById("compare-region-b");
       const compareCards = document.getElementById("compare-cards");
+      const compareOverviewLine = document.getElementById("compare-overview-line");
       const compareChartCanvas = document.getElementById("compare-chart");
       const criticalFeed = document.getElementById("critical-feed");
       const overviewTempChartCanvas = document.getElementById("overview-temp-chart");
@@ -888,7 +908,7 @@
         criticals.sort((a, b) => b.temp - a.temp);
         const top = criticals.slice(0, 3);
         if (!top.length) {
-          criticalFeed.innerHTML = `<article class="critical-note empty"><strong>No critical AZ alerts</strong> — all monitored AZs are below the critical threshold.</article>`;
+          criticalFeed.innerHTML = "";
           return;
         }
         criticalFeed.innerHTML = top
@@ -899,12 +919,6 @@
               )}°C</article>`
           )
           .join("");
-      }
-
-      function statusFromTemp(temp) {
-        if (temp >= 40) return "Critical";
-        if (temp >= 35) return "Warning";
-        return "Normal";
       }
 
       function renderOverviewCharts(summaryRows, totals) {
@@ -1007,6 +1021,46 @@
         const rowA = summaryRows.find((r) => r.regionCode === selectedA) || null;
         const rowB = summaryRows.find((r) => r.regionCode === selectedB) || null;
 
+        if (compareOverviewLine) {
+          if (!rowA && !rowB) {
+            compareOverviewLine.textContent = "";
+          } else if (rowA && rowB) {
+            const tA = Number(rowA.avgTemp);
+            const tB = Number(rowB.avgTemp);
+            const warmer =
+              Number.isFinite(tA) && Number.isFinite(tB)
+                ? tA >= tB
+                  ? rowA.regionLabel
+                  : rowB.regionLabel
+                : null;
+            const riskLead =
+              Number(rowA.riskCount) > Number(rowB.riskCount)
+                ? rowA.regionLabel
+                : Number(rowB.riskCount) > Number(rowA.riskCount)
+                  ? rowB.regionLabel
+                  : null;
+            const parts = [];
+            parts.push(
+              `${rowA.regionLabel}: avg rack temp ${rowA.avgTemp} °C, ${rowA.riskCount} risk AZ(s), ${rowA.criticalRacksInRegion} critical rack(s).`
+            );
+            parts.push(
+              `${rowB.regionLabel}: avg rack temp ${rowB.avgTemp} °C, ${rowB.riskCount} risk AZ(s), ${rowB.criticalRacksInRegion} critical rack(s).`
+            );
+            if (warmer && Number.isFinite(tA) && Number.isFinite(tB) && Math.abs(tA - tB) > 0.01) {
+              parts.push(`Higher average temperature: ${warmer}.`);
+            }
+            if (riskLead) {
+              parts.push(`More risk-flagged AZs: ${riskLead}.`);
+            }
+            compareOverviewLine.textContent = parts.join(" ");
+          } else {
+            const one = rowA || rowB;
+            compareOverviewLine.textContent = one
+              ? `${one.regionLabel}: avg rack temp ${one.avgTemp} °C, ${one.riskCount} risk AZ(s), ${one.criticalRacksInRegion} critical rack(s).`
+              : "";
+          }
+        }
+
         if (compareCards) {
           const card = (row, title) =>
             !row
@@ -1020,16 +1074,6 @@
                   <span>Hottest AZ</span><strong>${row.hottest}</strong>
                 </div></article>`;
           compareCards.innerHTML = card(rowA, "Region A") + card(rowB, "Region B");
-        }
-
-        if (compareTableBody) {
-          const rows = [rowA, rowB].filter(Boolean);
-          compareTableBody.innerHTML = rows
-            .map(
-              (r) =>
-                `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.totalRacksInRegion}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.criticalRacksInRegion}</td></tr>`
-            )
-            .join("");
         }
 
         if (window.Chart && compareChartCanvas) {
@@ -1092,7 +1136,6 @@
           const settled = await Promise.allSettled(regionCodes.map((code) => fetchRegionSummary(code)));
 
           const summaryRows = [];
-          const compareRows = [];
 
           settled.forEach((result, idx) => {
           const code = regionCodes[idx];
@@ -1106,6 +1149,8 @@
               avgTemp: "—",
               riskCount: 0,
               hottest: "No data",
+              totalRacksInRegion: 0,
+              criticalRacksInRegion: 0,
             });
             return;
           }
@@ -1119,9 +1164,6 @@
           racksData.forEach((rackRow) => {
             const latest = rackRow.latest || {};
             const rTemp = latest.rack_temperature ? Number(latest.rack_temperature.value) : NaN;
-            const room = latest.room_temperature ? Number(latest.room_temperature.value) : NaN;
-            const hum = latest.humidity ? Number(latest.humidity.value) : NaN;
-            const air = latest.airflow ? Number(latest.airflow.value) : NaN;
             const flags = latest.rack_temperature || latest.room_temperature || latest.humidity || latest.airflow || latest.outdoor_temperature;
             if (flags && (flags.overheating || flags.cooling_failure || flags.static_risk)) riskCount += 1;
             if (Number.isFinite(rTemp)) {
@@ -1129,16 +1171,6 @@
               sumTemp += rTemp;
               if (rTemp > hottest.temp) hottest = { label: rackRow.label, temp: rTemp };
             }
-            compareRows.push({
-              region: code,
-              regionName: region ? region.name : code,
-              az: rackRow.label || rackRow.rack_id || "—",
-              rackTemp: Number.isFinite(rTemp) ? rTemp.toFixed(2) : "—",
-              roomTemp: Number.isFinite(room) ? room.toFixed(2) : "—",
-              humidity: Number.isFinite(hum) ? hum.toFixed(2) : "—",
-              airflow: Number.isFinite(air) ? air.toFixed(2) : "—",
-              status: Number.isFinite(rTemp) ? statusFromTemp(rTemp) : "No data",
-            });
           });
 
           summaryRows.push({
@@ -1191,23 +1223,6 @@
         }
 
           renderCompareTab(summaryRows);
-
-          if (compareTableBody) {
-          compareRows.sort((a, b) => {
-            const ax = Number(a.rackTemp);
-            const bx = Number(b.rackTemp);
-            if (Number.isFinite(ax) && Number.isFinite(bx)) return bx - ax;
-            if (Number.isFinite(ax)) return -1;
-            if (Number.isFinite(bx)) return 1;
-            return 0;
-          });
-          compareTableBody.innerHTML = compareRows
-            .map(
-              (r) =>
-                `<tr><td>${r.region}</td><td>${r.az}</td><td>${r.rackTemp}</td><td>${r.roomTemp}</td><td>${r.humidity}</td><td>${r.airflow}</td><td>${r.status}</td></tr>`
-            )
-            .join("");
-        }
 
           overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
           updateOverviewMetaLine(new Date().toLocaleTimeString());
