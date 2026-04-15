@@ -1058,6 +1058,9 @@
       let latestSummaryRows = [];
       let lastAzCriticalState = {};
       let azOutageState = {};
+      const regionDangerState = {};
+      let dangerPulseOn = false;
+      let lastDangerPulseMs = 0;
       let criticalFeedClearTimer = null;
       const OVERVIEW_REFRESH_SEC = 30;
       let overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
@@ -1077,17 +1080,39 @@
         });
       }
 
-      function highlightRegion(code) {
+      function repaintRegionMarkers() {
         Object.keys(entityByCode).forEach((k) => {
           const e = entityByCode[k];
           if (!e || !e.point) return;
-          const active = k === code;
-          e.point.pixelSize = active ? 14 : 10;
-          e.point.color = active
-            ? Cesium.Color.fromCssColorString("#ffd166")
-            : Cesium.Color.fromCssColorString("#3ea6ff");
-          e.point.outlineWidth = 2;
+          const active = k === focusedRegionCode;
+          const isDanger = Boolean(regionDangerState[k]);
+          if (isDanger) {
+            e.point.pixelSize = active ? (dangerPulseOn ? 22 : 18) : (dangerPulseOn ? 20 : 16);
+            e.point.color = Cesium.Color.fromCssColorString(dangerPulseOn ? "#ff143d" : "#ff2a4d");
+            e.point.outlineColor = Cesium.Color.WHITE;
+            e.point.outlineWidth = 3;
+          } else {
+            e.point.pixelSize = active ? 14 : 10;
+            e.point.color = active
+              ? Cesium.Color.fromCssColorString("#ffd166")
+              : Cesium.Color.fromCssColorString("#3ea6ff");
+            e.point.outlineColor = Cesium.Color.WHITE;
+            e.point.outlineWidth = 2;
+          }
+          if (e.label) {
+            const region = regionByCode[k];
+            const baseText = region ? `${region.code}\n${region.name}` : k;
+            e.label.text = isDanger ? `! ${baseText}` : baseText;
+            e.label.backgroundColor = isDanger
+              ? Cesium.Color.fromCssColorString("rgba(125,10,22,0.88)")
+              : Cesium.Color.fromCssColorString("rgba(12,20,35,0.75)");
+          }
         });
+      }
+
+      function highlightRegion(code) {
+        focusedRegionCode = code || null;
+        repaintRegionMarkers();
       }
 
       function setAzOutageMarker(azId, isOut) {
@@ -1097,9 +1122,10 @@
       }
 
       function setRegionDanger(regionCode, isDanger) {
+        regionDangerState[regionCode] = Boolean(isDanger);
         const marker = regionDangerEntityByCode[regionCode];
-        if (!marker) return;
-        marker.show = Boolean(isDanger);
+        if (marker) marker.show = false;
+        repaintRegionMarkers();
       }
 
       function emphasizeOutageAz(regionCode, azId) {
@@ -1750,6 +1776,12 @@
       }, Cesium.ScreenSpaceEventType.PINCH_START);
 
       viewer.clock.onTick.addEventListener(() => {
+        const now = Date.now();
+        if (now - lastDangerPulseMs >= 550) {
+          dangerPulseOn = !dangerPulseOn;
+          lastDangerPulseMs = now;
+          repaintRegionMarkers();
+        }
         if (!autoRotateEnabled || focusedRegionCode) return;
         if (Date.now() < pauseAutoRotateUntilMs) return;
         viewer.scene.camera.rotateRight(ROTATE_SPEED);
