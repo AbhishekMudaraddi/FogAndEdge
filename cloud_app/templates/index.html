@@ -370,6 +370,71 @@
         height: 260px;
       }
 
+      .compare-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .compare-control {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .compare-control label {
+        display: block;
+        font-size: 12px;
+        color: #a9bad8;
+        margin-bottom: 6px;
+      }
+
+      .compare-control select {
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.07);
+        color: #eaf2ff;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+
+      .compare-cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .compare-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 12px;
+      }
+
+      .compare-card h4 {
+        margin: 0 0 8px;
+        color: #e3edff;
+      }
+
+      .compare-kv {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        row-gap: 5px;
+        column-gap: 10px;
+        font-size: 13px;
+      }
+
+      .compare-kv span {
+        color: #a9bad8;
+      }
+
+      .compare-kv strong {
+        color: #f3f7ff;
+      }
+
       @media (max-width: 1024px) {
         .charts-grid {
           grid-template-columns: 1fr;
@@ -439,6 +504,11 @@
           grid-template-columns: 1fr;
         }
 
+        .compare-controls,
+        .compare-cards {
+          grid-template-columns: 1fr;
+        }
+
         .table-wrap {
           overflow-x: auto;
         }
@@ -503,12 +573,6 @@
             </div>
           </article>
         </div>
-        <article class="chart-card">
-          <h4>Region comparison</h4>
-          <div class="chart-wrap">
-            <canvas id="overview-compare-chart"></canvas>
-          </div>
-        </article>
         <div class="table-wrap">
           <table>
             <thead>
@@ -526,19 +590,35 @@
     </section>
     <section id="compare-view" class="page-view data-view hidden" aria-label="AZ comparison">
       <div class="data-wrap">
-        <h2>Compare AZs</h2>
-        <p>Cross-region comparison by latest thermal and airflow metrics.</p>
+        <h2>Compare Regions</h2>
+        <p>Select two regions for side-by-side comparison.</p>
+        <div class="compare-controls">
+          <div class="compare-control">
+            <label for="compare-region-a">Region A</label>
+            <select id="compare-region-a"></select>
+          </div>
+          <div class="compare-control">
+            <label for="compare-region-b">Region B</label>
+            <select id="compare-region-b"></select>
+          </div>
+        </div>
+        <div id="compare-cards" class="compare-cards"></div>
+        <article class="chart-card">
+          <h4>Selected region overview graph</h4>
+          <div class="chart-wrap">
+            <canvas id="compare-chart"></canvas>
+          </div>
+        </article>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Region</th>
-                <th>AZ</th>
-                <th>Rack Temp (°C)</th>
-                <th>Room Temp (°C)</th>
-                <th>Humidity (%)</th>
-                <th>Airflow (m/s)</th>
-                <th>Status</th>
+                <th>AZ count</th>
+                <th>Total racks</th>
+                <th>Avg rack temp (°C)</th>
+                <th>Risk AZs</th>
+                <th>Critical racks</th>
               </tr>
             </thead>
             <tbody id="compare-table-body"></tbody>
@@ -707,17 +787,21 @@
       const overviewGrid = document.getElementById("overview-grid");
       const overviewTableBody = document.getElementById("overview-table-body");
       const compareTableBody = document.getElementById("compare-table-body");
+      const compareRegionA = document.getElementById("compare-region-a");
+      const compareRegionB = document.getElementById("compare-region-b");
+      const compareCards = document.getElementById("compare-cards");
+      const compareChartCanvas = document.getElementById("compare-chart");
       const criticalFeed = document.getElementById("critical-feed");
       const overviewTempChartCanvas = document.getElementById("overview-temp-chart");
       const overviewRiskChartCanvas = document.getElementById("overview-risk-chart");
-      const overviewCompareChartCanvas = document.getElementById("overview-compare-chart");
       const overviewMeta = document.getElementById("overview-meta");
       const overviewRefreshBtn = document.getElementById("overview-refresh");
       let overviewTempChart = null;
       let overviewRiskChart = null;
-      let overviewCompareChart = null;
+      let compareChart = null;
       let currentViewId = "home-view";
       let dataRefreshInFlight = false;
+      let latestSummaryRows = [];
       const OVERVIEW_REFRESH_SEC = 30;
       let overviewRefreshCountdown = OVERVIEW_REFRESH_SEC;
       if (select) {
@@ -837,7 +921,6 @@
 
         if (overviewTempChart) overviewTempChart.destroy();
         if (overviewRiskChart) overviewRiskChart.destroy();
-        if (overviewCompareChart) overviewCompareChart.destroy();
 
         overviewTempChart = new Chart(overviewTempChartCanvas, {
           type: "bar",
@@ -894,28 +977,88 @@
           },
         });
 
-        if (overviewCompareChartCanvas) {
-          const riskAzByRegion = summaryRows.map((r) => Number(r.riskCount) || 0);
-          overviewCompareChart = new Chart(overviewCompareChartCanvas, {
+      }
+
+      function renderCompareTab(summaryRows) {
+        latestSummaryRows = summaryRows.slice();
+        const selectable = summaryRows
+          .map((r) => ({ code: r.regionCode, label: r.regionLabel }))
+          .filter((r) => r.code);
+
+        if (compareRegionA && compareRegionA.options.length === 0) {
+          selectable.forEach((r) => {
+            const a = document.createElement("option");
+            a.value = r.code;
+            a.textContent = r.label;
+            compareRegionA.appendChild(a);
+            const b = document.createElement("option");
+            b.value = r.code;
+            b.textContent = r.label;
+            compareRegionB.appendChild(b);
+          });
+          compareRegionA.value = selectable.find((x) => x.code === "eu-west-1") ? "eu-west-1" : (selectable[0] ? selectable[0].code : "");
+          compareRegionB.value = selectable.find((x) => x.code === "ap-south-1")
+            ? "ap-south-1"
+            : (selectable[1] ? selectable[1].code : compareRegionA.value);
+        }
+
+        const selectedA = compareRegionA ? compareRegionA.value : "";
+        const selectedB = compareRegionB ? compareRegionB.value : "";
+        const rowA = summaryRows.find((r) => r.regionCode === selectedA) || null;
+        const rowB = summaryRows.find((r) => r.regionCode === selectedB) || null;
+
+        if (compareCards) {
+          const card = (row, title) =>
+            !row
+              ? `<article class="compare-card"><h4>${title}</h4><p>No data</p></article>`
+              : `<article class="compare-card"><h4>${row.regionLabel}</h4><div class="compare-kv">
+                  <span>AZ count</span><strong>${row.azCount}</strong>
+                  <span>Total racks</span><strong>${row.totalRacksInRegion}</strong>
+                  <span>Avg rack temp</span><strong>${row.avgTemp} °C</strong>
+                  <span>Risk AZs</span><strong>${row.riskCount}</strong>
+                  <span>Critical racks</span><strong>${row.criticalRacksInRegion}</strong>
+                  <span>Hottest AZ</span><strong>${row.hottest}</strong>
+                </div></article>`;
+          compareCards.innerHTML = card(rowA, "Region A") + card(rowB, "Region B");
+        }
+
+        if (compareTableBody) {
+          const rows = [rowA, rowB].filter(Boolean);
+          compareTableBody.innerHTML = rows
+            .map(
+              (r) =>
+                `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.totalRacksInRegion}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td><td>${r.criticalRacksInRegion}</td></tr>`
+            )
+            .join("");
+        }
+
+        if (window.Chart && compareChartCanvas) {
+          if (compareChart) compareChart.destroy();
+          const labels = ["Avg Temp (°C)", "Risk AZs", "Total Racks", "Critical Racks"];
+          const dataA = rowA
+            ? [Number(rowA.avgTemp) || 0, Number(rowA.riskCount) || 0, Number(rowA.totalRacksInRegion) || 0, Number(rowA.criticalRacksInRegion) || 0]
+            : [0, 0, 0, 0];
+          const dataB = rowB
+            ? [Number(rowB.avgTemp) || 0, Number(rowB.riskCount) || 0, Number(rowB.totalRacksInRegion) || 0, Number(rowB.criticalRacksInRegion) || 0]
+            : [0, 0, 0, 0];
+          compareChart = new Chart(compareChartCanvas, {
             type: "bar",
             data: {
               labels,
               datasets: [
                 {
-                  label: "Avg Rack Temp (°C)",
-                  data: avgTemps,
-                  backgroundColor: "rgba(62,166,255,0.55)",
+                  label: rowA ? rowA.regionCode : "Region A",
+                  data: dataA,
+                  backgroundColor: "rgba(62,166,255,0.6)",
                   borderColor: "rgba(62,166,255,1)",
                   borderWidth: 1,
-                  yAxisID: "y",
                 },
                 {
-                  label: "Risk AZs",
-                  data: riskAzByRegion,
-                  backgroundColor: "rgba(232,93,93,0.55)",
-                  borderColor: "rgba(232,93,93,1)",
+                  label: rowB ? rowB.regionCode : "Region B",
+                  data: dataB,
+                  backgroundColor: "rgba(245,166,35,0.6)",
+                  borderColor: "rgba(245,166,35,1)",
                   borderWidth: 1,
-                  yAxisID: "y1",
                 },
               ],
             },
@@ -927,13 +1070,7 @@
               },
               scales: {
                 x: { ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.06)" } },
-                y: { position: "left", ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.08)" } },
-                y1: {
-                  position: "right",
-                  ticks: { color: "#ffb3b3", precision: 0 },
-                  grid: { drawOnChartArea: false },
-                  beginAtZero: true,
-                },
+                y: { beginAtZero: true, ticks: { color: "#c7d8f8" }, grid: { color: "rgba(255,255,255,0.08)" } },
               },
             },
           });
@@ -1053,6 +1190,8 @@
             .join("");
         }
 
+          renderCompareTab(summaryRows);
+
           if (compareTableBody) {
           compareRows.sort((a, b) => {
             const ax = Number(a.rackTemp);
@@ -1096,6 +1235,13 @@
       navButtons.forEach((btn) => {
         btn.addEventListener("click", () => activateView(btn.dataset.view || "home-view"));
       });
+
+      function rerenderCompareFromLatest() {
+        if (latestSummaryRows.length) renderCompareTab(latestSummaryRows);
+      }
+
+      if (compareRegionA) compareRegionA.addEventListener("change", rerenderCompareFromLatest);
+      if (compareRegionB) compareRegionB.addEventListener("change", rerenderCompareFromLatest);
 
       if (overviewRefreshBtn) {
         overviewRefreshBtn.addEventListener("click", () => loadOverviewAndCompare());
