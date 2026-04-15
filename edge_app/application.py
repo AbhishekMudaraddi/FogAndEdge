@@ -455,12 +455,13 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
   <p>Choose one or more dashboard regions, then start/stop critical simulation for those regions.
   During simulation, rack temperatures in selected regions are forced into the critical band (&gt;40°C).</p>
   <div class="targets">
-    <h2>Dashboard regions</h2>
-    <div id="target-grid" class="target-grid"></div>
+    <h2>Dashboard region</h2>
+    <label for="region-select" class="hint">Select a region for simulation controls</label>
+    <select id="region-select" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid #30363d;background:#0b1220;color:#e6edf3;"></select>
   </div>
   <div class="row">
-    <button type="button" class="start" id="btn-start-selected">Start selected</button>
-    <button type="button" class="stop" id="btn-stop-selected">Stop selected</button>
+    <button type="button" class="start" id="btn-start-selected">Start</button>
+    <button type="button" class="stop" id="btn-stop-selected">Stop</button>
     <button type="button" class="start" id="btn-start-all">Start all</button>
     <button type="button" class="stop" id="btn-stop-all">Stop all</button>
     <button type="button" class="secondary" id="btn-publish">Publish now</button>
@@ -471,21 +472,19 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
   <script>
     const out = document.getElementById("out");
     const activeEl = document.getElementById("active");
-    const targetGrid = document.getElementById("target-grid");
+    const regionSelect = document.getElementById("region-select");
     let availableRegions = [];
-    function selectedRegions() {
-      return Array.from(document.querySelectorAll(".sim-target:checked")).map((el) => el.value);
+    function selectedRegion() {
+      return regionSelect && regionSelect.value ? regionSelect.value : "";
     }
-    function renderTargets() {
-      if (!targetGrid) return;
-      targetGrid.innerHTML = availableRegions
-        .map((r) => (
-          `<label class="target-item">` +
-          `<input class="sim-target" type="checkbox" value="${r.region}" />` +
-          `<span><strong>${r.name}</strong><small>${r.region}</small></span>` +
-          `</label>`
-        ))
+    function renderRegionSelect() {
+      if (!regionSelect) return;
+      const prev = regionSelect.value;
+      regionSelect.innerHTML = availableRegions
+        .map((r) => `<option value="${r.region}">${r.name} (${r.region})</option>`)
         .join("");
+      if (!availableRegions.length) return;
+      regionSelect.value = availableRegions.some((r) => r.region === prev) ? prev : availableRegions[0].region;
     }
     function describeActive(activeRegions) {
       if (!Array.isArray(activeRegions) || !activeRegions.length) return "Active critical simulation: none";
@@ -497,7 +496,7 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
         const r = await fetch("/sim/critical/status");
         const j = await r.json();
         availableRegions = Array.isArray(j.available_regions) ? j.available_regions : [];
-        if (targetGrid && !targetGrid.children.length) renderTargets();
+        renderRegionSelect();
         const active = Array.isArray(j.active_regions) ? j.active_regions : [];
         out.textContent = active.length
           ? `Simulation running in ${active.length} region(s).`
@@ -518,8 +517,16 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
         out.textContent = "Request error: " + e;
       }
     }
-    document.getElementById("btn-start-selected").addEventListener("click", () => post("/sim/critical/start?publish_now=1", { regions: selectedRegions() }));
-    document.getElementById("btn-stop-selected").addEventListener("click", () => post("/sim/critical/stop", { regions: selectedRegions() }));
+    document.getElementById("btn-start-selected").addEventListener("click", () => {
+      const region = selectedRegion();
+      if (!region) return;
+      post("/sim/critical/start?publish_now=1", { regions: [region] });
+    });
+    document.getElementById("btn-stop-selected").addEventListener("click", () => {
+      const region = selectedRegion();
+      if (!region) return;
+      post("/sim/critical/stop", { regions: [region] });
+    });
     document.getElementById("btn-start-all").addEventListener("click", () => post("/sim/critical/start?publish_now=1", { regions: availableRegions.map((r) => r.region) }));
     document.getElementById("btn-stop-all").addEventListener("click", () => post("/sim/critical/stop", { regions: availableRegions.map((r) => r.region) }));
     document.getElementById("btn-publish").addEventListener("click", () => post("/sim/publish-now"));
