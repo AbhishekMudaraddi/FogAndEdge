@@ -17,6 +17,7 @@
         width: 100%;
         height: 100%;
         font-family: Arial, sans-serif;
+        overflow: hidden;
       }
 
       #globe {
@@ -42,7 +43,7 @@
       }
 
       .top-nav {
-        position: absolute;
+        position: fixed;
         top: 14px;
         right: 16px;
         z-index: 1200;
@@ -72,7 +73,7 @@
       }
 
       .critical-feed {
-        position: absolute;
+        position: fixed;
         top: 66px;
         right: 16px;
         z-index: 1190;
@@ -101,11 +102,13 @@
       }
 
       .region-panel {
-        position: absolute;
-        top: 140px;
+        position: fixed;
+        top: 84px;
         left: 16px;
-        z-index: 1000;
+        z-index: 1180;
         width: 280px;
+        max-width: calc(100vw - 32px);
+        box-sizing: border-box;
         background: rgba(12, 20, 35, 0.28);
         color: #ffffff;
         border-radius: 10px;
@@ -350,6 +353,7 @@
       .page-view {
         position: absolute;
         inset: 0;
+        overflow: hidden;
       }
 
       .page-view.hidden {
