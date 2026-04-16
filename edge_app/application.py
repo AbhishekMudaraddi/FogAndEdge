@@ -444,10 +444,22 @@ _SIM_PAGE_HTML = """<!DOCTYPE html>
     .hint { color: #9fb1c8; font-size: 0.82rem; }
     .active-list { margin-top: 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
     .active-list h3 { margin: 0 0 8px; font-size: 1rem; }
-    .active-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #30363d; border-radius: 8px; background: #111720; margin-bottom: 8px; }
+    .active-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #30363d; border-radius: 8px; background: #111720; margin-bottom: 8px; flex-wrap: wrap; }
     .active-item:last-child { margin-bottom: 0; }
     .active-empty { color: #8b949e; font-size: 0.88rem; }
     .active-meta small { display: block; color: #8b949e; font-size: 0.75rem; }
+    .active-item .stop { margin-left: auto; min-width: 84px; }
+    @media (max-width: 640px) {
+      body { margin: 14px auto; padding: 0 10px 16px; }
+      h1 { font-size: 1.1rem; margin: 0 0 8px; }
+      p { font-size: 0.86rem; }
+      .targets, .active-list, .status { padding: 10px; }
+      .row { margin: 10px 0; }
+      button { width: 100%; padding: 11px 12px; font-size: 0.92rem; }
+      .active-item { align-items: stretch; }
+      .active-meta { width: 100%; }
+      .active-item .stop { width: 100%; margin-left: 0; }
+    }
   </style>
 </head>
 <body>
