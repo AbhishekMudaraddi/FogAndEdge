@@ -1546,8 +1546,16 @@
           racksData.forEach((rackRow) => {
             const latest = rackRow.latest || {};
             const rTemp = latest.rack_temperature ? Number(latest.rack_temperature.value) : NaN;
-            const flags = latest.rack_temperature || latest.room_temperature || latest.humidity || latest.airflow || latest.outdoor_temperature;
-            if (flags && (flags.overheating || flags.cooling_failure || flags.static_risk)) riskCount += 1;
+            const sensorRows = [
+              latest.rack_temperature,
+              latest.room_temperature,
+              latest.humidity,
+              latest.airflow,
+              latest.outdoor_temperature,
+            ].filter(Boolean);
+            const hasDerivedRisk = sensorRows.some((x) => Boolean(x.overheating || x.cooling_failure || x.static_risk));
+            const hasTempRisk = Number.isFinite(rTemp) && rTemp >= 40;
+            if (hasDerivedRisk || hasTempRisk) riskCount += 1;
             if (Number.isFinite(rTemp)) {
               tempCount += 1;
               sumTemp += rTemp;
