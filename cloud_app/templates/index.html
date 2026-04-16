@@ -729,18 +729,9 @@
             </div>
           </article>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Region</th>
-                <th>AZ count</th>
-                <th>Avg rack temp (°C)</th>
-                <th>Risk AZs</th>
-              </tr>
-            </thead>
-            <tbody id="overview-table-body"></tbody>
-          </table>
+        <div class="compare-section">
+          <h3 class="compare-section-title">Region overview cards</h3>
+          <div id="overview-region-cards" class="compare-cards"></div>
         </div>
       </div>
     </section>
@@ -989,7 +980,7 @@
       const dismissedAzOutage = {};
       let activeAzOutages = [];
       const overviewGrid = document.getElementById("overview-grid");
-      const overviewTableBody = document.getElementById("overview-table-body");
+      const overviewRegionCards = document.getElementById("overview-region-cards");
       const compareRegionA = document.getElementById("compare-region-a");
       const compareRegionB = document.getElementById("compare-region-b");
       const compareCards = document.getElementById("compare-cards");
@@ -1604,14 +1595,17 @@
             renderOverviewCharts(summaryRows, totals);
         }
 
-          if (overviewTableBody) {
-          overviewTableBody.innerHTML = summaryRows
-            .map(
-              (r) =>
-                  `<tr><td>${r.regionLabel}</td><td>${r.azCount}</td><td>${r.avgTemp}</td><td>${r.riskCount}</td></tr>`
-            )
-            .join("");
-        }
+          if (overviewRegionCards) {
+            overviewRegionCards.innerHTML = summaryRows
+              .map((r) => {
+                return `<article class="compare-card"><h4>${r.regionLabel}</h4><div class="compare-kv">
+                  <span>Total AZ</span><strong>${r.azCount}</strong>
+                  <span>Avg rack temp</span><strong>${r.avgTemp} °C</strong>
+                  <span>Risk AZ</span><strong>${r.riskCount}</strong>
+                </div></article>`;
+              })
+              .join("");
+          }
 
           renderCompareTab(summaryRows);
 
