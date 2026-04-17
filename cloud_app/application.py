@@ -251,7 +251,6 @@ def _dashboard_poll_interval_ms() -> int:
         value = int(raw)
     except ValueError:
         value = 30000
-    # Keep a sensible floor to avoid accidental browser/API overload.
     return max(1000, value)
 
 

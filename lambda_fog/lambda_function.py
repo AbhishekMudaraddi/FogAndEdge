@@ -167,7 +167,6 @@ def process_records(records: list[dict[str, Any]], now_epoch: int) -> None:
                 logger.warning("Skip bad message: %s", e)
                 continue
 
-            # If one SQS message contains multiple racks, compute derived flags per rack.
             grouped: dict[str, list[dict[str, Any]]] = {}
             for reading in readings:
                 rack = str(reading.get("rack_id") or reading.get("datacenter_id") or "unknown")

@@ -66,7 +66,6 @@ RACK_IDS = tuple(x.strip() for x in RACK_IDS_RAW.split(",") if x.strip())
 if not RACK_IDS:
     RACK_IDS = ("rack_01", "rack_02", "rack_03")
 DATACENTER_ID = os.environ.get("DATACENTER_ID", "DC-01")
-# Prefer rack_id on each reading; datacenter_id optional for dashboards
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "").strip()
 AWS_REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
 
@@ -75,13 +74,11 @@ _cycle_count = 0
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
 
-# Persist simulation state in a file so every Gunicorn worker shares the same state.
 _critical_sim_lock = threading.Lock()
 SIM_STATE_FILE = os.environ.get(
     "EDGE_SIM_STATE_FILE",
     os.path.join(os.environ.get("TMPDIR", "/tmp"), "edge_critical_sim_state.json"),
 )
-# Optional: set EDGE_SIM_KEY in EB to require Bearer token or ?key= on simulation routes.
 EDGE_SIM_KEY = os.environ.get("EDGE_SIM_KEY", "").strip()
 
 NORMAL_RACK_TEMP_MIN = 28.0
@@ -124,7 +121,6 @@ def _read_active_prefixes() -> set[str]:
         return set()
     if not raw:
         return set()
-    # Backward compatibility from old boolean file state.
     if raw == "1":
         prefix = _PREFIX_BY_REGION.get(_DEFAULT_SIM_REGION)
         return {prefix} if prefix else set()
@@ -226,10 +222,8 @@ def _random_value(sensor_type: str, rack_id: str, active_prefixes: set[str]) -> 
     if sensor_type == "room_temperature":
         return round(random.uniform(18.0, 28.0), 2)
     if sensor_type == "humidity":
-        # Stay above Lambda static_risk threshold (<20%).
         return round(random.uniform(30.0, 60.0), 2)
     if sensor_type == "airflow":
-        # Stay at/above Lambda cooling_failure threshold (<1.2 m/s).
         return round(random.uniform(1.2, 3.5), 2)
     if sensor_type == "outdoor_temperature":
         return round(random.uniform(-5.0, 35.0), 2)
@@ -563,7 +557,6 @@ def sim_control_page():
     return Response(_SIM_PAGE_HTML, mimetype="text/html; charset=utf-8")
 
 
-# Start worker when module loads (Gunicorn imports application)
 start_background_worker()
 
 

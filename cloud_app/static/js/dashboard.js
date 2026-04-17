@@ -27,7 +27,6 @@
     outdoor_temperature: "Outdoor °C",
   };
 
-  /** Severity thresholds and anti-spam cooldown. */
   const RACK_TEMP_WARN_C = 35;
   const RACK_TEMP_CRIT_C = 40;
   const ALERT_COOLDOWN_TICKS = 4;
@@ -107,10 +106,6 @@
     return `${Number(item.value).toFixed(2)} ${item.unit || ""}`;
   }
 
-  /**
-   * Lambda copies the same overheating/cooling_failure/static_risk onto every sensor row
-   * for a rack batch, so counting per-sensor would always show 5. Count distinct flags once.
-   */
   function riskCount(row) {
     let item = null;
     for (const k of SENSOR_ORDER) {
@@ -151,7 +146,6 @@
     return s === 0 ? `${m}m` : `${m}m ${s}s`;
   }
 
-  /** Fog (Lambda) copies enrichment onto every sensor row in the batch. */
   function fogCoolingEfficiency(latest) {
     for (const k of SENSOR_ORDER) {
       const item = latest && latest[k];
@@ -195,7 +189,6 @@
     return "normal";
   }
 
-  /** Matches rack card border and "Status: …" line (rack inlet temperature only). */
   function rackOperationalStatus(latest) {
     const tempRow = latest && latest.rack_temperature ? latest.rack_temperature : null;
     const tempVal = tempRow ? Number(tempRow.value) : null;
