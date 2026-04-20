@@ -1,6 +1,4 @@
-"""
-Cloud layer: Flask API + HTML dashboard; reads DynamoDB via Query (no table scans).
-"""
+
 from __future__ import annotations
 
 import logging

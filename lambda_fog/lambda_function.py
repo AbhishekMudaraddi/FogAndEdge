@@ -1,7 +1,4 @@
-"""
-Fog layer: SQS → enrich readings → DynamoDB (batch_writer, TTL).
-Sort key: {sensor_type}#{timestamp} so Query + begins_with works per sensor.
-"""
+
 from __future__ import annotations
 
 import json

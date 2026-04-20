@@ -1,7 +1,4 @@
-"""
-Edge layer: synthetic thermal sensors → Amazon SQS.
-Runs on Elastic Beanstalk with Gunicorn (entrypoint: application).
-"""
+
 from __future__ import annotations
 
 import json
